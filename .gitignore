@@ -8,6 +8,7 @@ dataset/
 # Other files and folders
 .vscode/
 *logs/
+ModelSave/
 
 # Executables
 *.swf

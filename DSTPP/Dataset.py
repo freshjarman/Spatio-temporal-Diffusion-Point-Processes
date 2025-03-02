@@ -25,7 +25,7 @@ class EventData(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         """ Each returned element is a list, which represents an event stream """
-        return self.time[idx],self.time_norm[idx], self.lng[idx], self.lat[idx]
+        return self.time[idx], self.time_norm[idx], self.lng[idx], self.lat[idx]
 
 
 class EventData_3D(torch.utils.data.Dataset):
@@ -51,6 +51,7 @@ class EventData_3D(torch.utils.data.Dataset):
         """ Each returned element is a list, which represents an event stream """
         return self.time[idx], self.time_norm[idx], self.lng[idx], self.lat[idx], self.height[idx]
 
+
 class EventData_1D(torch.utils.data.Dataset):
     """ Event stream dataset. """
 
@@ -59,7 +60,7 @@ class EventData_1D(torch.utils.data.Dataset):
         Data should be a list of event streams; each event stream is a list of dictionaries;
         each dictionary contains: time_since_start, time_since_last_event, type_event
         """
-        
+
         self.time = [[elem[0] for elem in inst] for inst in data]
         self.time_norm = [[elem[1] for elem in inst] for inst in data]
         self.lng = [[elem[2] for elem in inst] for inst in data]
@@ -79,9 +80,7 @@ def pad_time(insts):
 
     max_len = max(len(inst) for inst in insts)
 
-    batch_seq = np.array([
-        inst + [Constants.PAD] * (max_len - len(inst))
-        for inst in insts])
+    batch_seq = np.array([inst + [Constants.PAD] * (max_len - len(inst)) for inst in insts])
 
     return torch.tensor(batch_seq, dtype=torch.float32)
 
@@ -94,7 +93,8 @@ def collate_fn(insts):
     time_norm = pad_time(time_norm)
     lat = pad_time(lat)
     lng = pad_time(lng)
-    return time,time_norm, lng, lat
+    return time, time_norm, lng, lat
+
 
 def collate_fn_3d(insts):
     """ Collate function, as required by PyTorch. """
@@ -107,6 +107,7 @@ def collate_fn_3d(insts):
     height = pad_time(height)
     return time, time_norm, lng, lat, height
 
+
 def collate_fn_1d(insts):
     """ Collate function, as required by PyTorch. """
 
@@ -117,20 +118,14 @@ def collate_fn_1d(insts):
     return time, time_norm, lng
 
 
-def get_dataloader(data, batch_size, D = 2, shuffle=True):
+def get_dataloader(data, batch_size, D=2, shuffle=True):
     """ Prepare dataloader. """
 
-    collate = {1:collate_fn_1d, 2:collate_fn, 3:collate_fn_3d}
+    collate = {1: collate_fn_1d, 2: collate_fn, 3: collate_fn_3d}
 
-    if D>=2:
-        ds = EventData(data) if D==2 else EventData_3D(data)
-    if D==1:
+    if D >= 2:
+        ds = EventData(data) if D == 2 else EventData_3D(data)
+    if D == 1:
         ds = EventData_1D(data)
-    dl = torch.utils.data.DataLoader(
-        ds,
-        num_workers=2,
-        batch_size=batch_size,
-        collate_fn= collate[D],
-        shuffle=shuffle
-    )
+    dl = torch.utils.data.DataLoader(ds, num_workers=2, batch_size=batch_size, collate_fn=collate[D], shuffle=shuffle)
     return dl
