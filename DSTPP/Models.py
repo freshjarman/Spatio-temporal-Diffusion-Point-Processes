@@ -21,7 +21,7 @@ def get_attn_key_pad_mask(seq_k, seq_q):
     # expand to fit the shape of key query attention matrix
     len_q = seq_q.size(1)
     padding_mask = seq_k.eq(Constants.PAD)
-    padding_mask = padding_mask.unsqueeze(1).expand(-1, len_q, -1, -1)  # b x lq x lk
+    padding_mask = padding_mask.unsqueeze(1).expand(-1, len_q, -1, -1)  # b x lq x lk x dim
     return padding_mask
 
 
@@ -31,7 +31,7 @@ def get_subsequent_mask(seq, dim=2):
     sz_b, len_s = seq.size()[:2]
     subsequent_mask = torch.triu(torch.ones((dim, len_s, len_s), device=seq.device, dtype=torch.uint8),
                                  diagonal=1).permute(1, 2, 0)
-    subsequent_mask = subsequent_mask.unsqueeze(0).expand(sz_b, -1, -1, -1)  # b x ls x ls
+    subsequent_mask = subsequent_mask.unsqueeze(0).expand(sz_b, -1, -1, -1)  # b x ls x ls x dim
     return subsequent_mask
 
 
@@ -317,7 +317,7 @@ class Transformer_ST(nn.Module):
         """
 
         non_pad_mask = get_non_pad_mask(event_time)
-
+        # bsz x seq_len x d_model
         enc_output, enc_output_temporal, enc_output_loc = self.encoder(event_loc, event_time, non_pad_mask)
 
         assert (enc_output != enc_output_temporal).any() & (enc_output != enc_output_loc).any() & (
@@ -327,6 +327,6 @@ class Transformer_ST(nn.Module):
         enc_output_temporal = self.rnn_temporal(enc_output_temporal, non_pad_mask)
         enc_output_loc = self.rnn_spatial(enc_output_loc, non_pad_mask)
 
-        enc_output_all = torch.cat((enc_output_temporal, enc_output_loc, enc_output), dim=-1)
+        enc_output_all = torch.cat((enc_output_temporal, enc_output_loc, enc_output), dim=-1)  # b x seq_len x 3*d_model
 
         return enc_output_all, non_pad_mask

@@ -6,6 +6,10 @@ This project was initially described in the full research track paper *[Spatio-t
 
 The code is tested under a Linux desktop with torch 1.7 and Python 3.7.10.
 
+## Attention
+
+- **The dataset used in this project are normalized (specifically, normalized d_time & normalized location), which may affect `NLL` computation in Table2 in paper! i.e. `Spatial NLL` for `DeepSTPP` which isn't normalized in location.** You can refer to [issues](https://github.com/tsinghua-fib-lab/Spatio-temporal-Diffusion-Point-Processes/issues/4) on Github and [mathematical basics](https://kimi.moonshot.cn/share/cune319l51jflplgpllg) from my KIMI-Chat.
+
 ## Installation
 
 ### Environment

@@ -105,7 +105,7 @@ def data_loader(writer):
             Min.append(0)
 
     assert Min[1] > 0
-
+    # normalzie d_time and location (vector)
     train_data = [[[normalization(i[j], Max[j], Min[j]) for j in range(len(i))] for i in u] for u in train_data]
     test_data = [[[normalization(i[j], Max[j], Min[j]) for j in range(len(i))] for i in u] for u in test_data]
     val_data = [[[normalization(i[j], Max[j], Min[j]) for j in range(len(i))] for i in u] for u in val_data]
@@ -142,20 +142,20 @@ def Batch2toModel(batch, transformer):
     enc_out_non_mask = []
     event_time_non_mask = []
     event_loc_non_mask = []
-    for index in range(mask.shape[0]):
+    for index in range(mask.shape[0]):  # combine all in a long sequence, match condition and event pairwisely
         length = int(sum(mask[index]).item())
         if length > 1:
-            enc_out_non_mask += [i.unsqueeze(dim=0) for i in enc_out[index][:length - 1]]
-            event_time_non_mask += [i.unsqueeze(dim=0) for i in event_time[index][1:length]]
-            event_loc_non_mask += [i.unsqueeze(dim=0) for i in event_loc[index][1:length]]
+            enc_out_non_mask += [i.unsqueeze(dim=0) for i in enc_out[index][:length - 1]]  # condition
+            event_time_non_mask += [i.unsqueeze(dim=0) for i in event_time[index][1:length]]  # event time
+            event_loc_non_mask += [i.unsqueeze(dim=0) for i in event_loc[index][1:length]]  # event loc
 
     enc_out_non_mask = torch.cat(enc_out_non_mask, dim=0)
     event_time_non_mask = torch.cat(event_time_non_mask, dim=0)
     event_loc_non_mask = torch.cat(event_loc_non_mask, dim=0)
 
-    event_time_non_mask = event_time_non_mask.reshape(-1, 1, 1)
-    event_loc_non_mask = event_loc_non_mask.reshape(-1, 1, opt.dim)
-
+    event_time_non_mask = event_time_non_mask.reshape(-1, 1, 1)  # (num_all_instances, 1, 1)
+    event_loc_non_mask = event_loc_non_mask.reshape(-1, 1, opt.dim)  # (num_all_instances, 1, dim)
+    # (num_all_instances, 1, 3 * d_model)
     enc_out_non_mask = enc_out_non_mask.reshape(event_time_non_mask.shape[0], 1, -1)
 
     return event_time_non_mask, event_loc_non_mask, enc_out_non_mask

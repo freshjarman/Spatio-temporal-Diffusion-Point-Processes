@@ -14,8 +14,8 @@ class EventData(torch.utils.data.Dataset):
         each dictionary contains: time_since_start, time_since_last_event, type_event
         """
         self.time = [[elem[0] for elem in inst] for inst in data]
-        self.time_norm = [[elem[1] for elem in inst] for inst in data]
-        self.lng = [[elem[2] for elem in inst] for inst in data]
+        self.time_norm = [[elem[1] for elem in inst] for inst in data] # d_t_norm
+        self.lng = [[elem[2] for elem in inst] for inst in data] 
         self.lat = [[elem[3] for elem in inst] for inst in data]
 
         self.length = len(data)

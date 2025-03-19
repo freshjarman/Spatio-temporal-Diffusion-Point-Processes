@@ -280,7 +280,7 @@ class GaussianDiffusion_ST(nn.Module):
         self.channels = self.model.channels
         self.self_condition = self.model.self_condition
 
-        self.seq_length = seq_length
+        self.seq_length = seq_length  # dim + 1
 
         self.objective = objective
 
@@ -290,7 +290,7 @@ class GaussianDiffusion_ST(nn.Module):
 
         if beta_schedule == 'linear':
             betas = linear_beta_schedule(timesteps)
-        elif beta_schedule == 'cosine':
+        elif beta_schedule == 'cosine':  # beta_k in eq(9) in diffusion
             betas = cosine_beta_schedule(timesteps)
 
         else:
@@ -322,7 +322,7 @@ class GaussianDiffusion_ST(nn.Module):
         register_buffer('alphas_cumprod', alphas_cumprod)
         register_buffer('alphas_cumprod_prev', alphas_cumprod_prev)
 
-        # calculations for diffusion q(x_t | x_{t-1}) and others
+        ### calculations for diffusion q(x_t | x_{t-1}) and others
 
         register_buffer('sqrt_alphas_cumprod', torch.sqrt(alphas_cumprod))
         register_buffer('sqrt_one_minus_alphas_cumprod', torch.sqrt(1. - alphas_cumprod))
@@ -330,7 +330,7 @@ class GaussianDiffusion_ST(nn.Module):
         register_buffer('sqrt_recip_alphas_cumprod', torch.sqrt(1. / alphas_cumprod))
         register_buffer('sqrt_recipm1_alphas_cumprod', torch.sqrt(1. / alphas_cumprod - 1))
 
-        # calculations for posterior q(x_{t-1} | x_t, x_0)
+        ### calculations for posterior q(x_{t-1} | x_t, x_0)
 
         posterior_variance = betas * (1. - alphas_cumprod_prev) / (1. - alphas_cumprod)
 
@@ -377,7 +377,7 @@ class GaussianDiffusion_ST(nn.Module):
         return output, output_temporal, output_spatial, pred_xstart
 
     def predict_start_from_noise(self, x_t, t, noise):
-
+        # Algorithm 2 in paper
         return (extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t -
                 extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape) * noise)
 
@@ -409,8 +409,8 @@ class GaussianDiffusion_ST(nn.Module):
         return mean, variance, log_variance
 
     def model_predictions(self, x, t, x_self_cond=None, clip_x_start=False, cond=None):
-        model_output = self.model(x, t, x_self_cond, cond=cond)
-        attn_weight = self.model.get_attn(x, t, x_self_cond, cond=cond)
+        model_output = self.model(x, t, x_self_cond, cond=cond)  # (bsz, 1, 1+opt.dim)
+        attn_weight = self.model.get_attn(x, t, x_self_cond, cond=cond)  # tuple of (alpha_s, alpha_t), shape=(bsz, 2)
         maybe_clip = partial(torch.clamp, min=-1., max=1.) if clip_x_start else identity
 
         if self.objective == 'pred_noise':
@@ -432,8 +432,8 @@ class GaussianDiffusion_ST(nn.Module):
         return ModelPrediction(pred_noise, x_start), attn_weight
 
     def p_mean_variance(self, x, t, x_self_cond=None, clip_denoised=True, cond=None, Type=None):
-        preds, attn_weight = self.model_predictions(x, t, x_self_cond, cond=cond)
-        x_start = preds.pred_x_start
+        preds, attn_weight = self.model_predictions(x, t, x_self_cond, cond=cond)  # x: (bsz, 1, 1+opt.dim-1)
+        x_start = preds.pred_x_start  # corresponds to x0 in the paper
 
         if clip_denoised:
             x_start.clamp_(-1., 1.)
@@ -453,7 +453,7 @@ class GaussianDiffusion_ST(nn.Module):
         noise = torch.randn_like(x) if t > 0 else 0.  # no noise if t == 0
         pred_img = model_mean + (0.5 * model_log_variance).exp() * noise
 
-        return pred_img, x_start, attn_weight
+        return pred_img, x_start, attn_weight  # (bsz, 1, 1+opt.dim); tuple of (alpha_s, alpha_t), shape=(bsz, 2)
 
     @torch.no_grad()
     def p_sample_loop(self, shape, cond):
@@ -462,7 +462,7 @@ class GaussianDiffusion_ST(nn.Module):
         img = torch.randn(shape, device=device)
 
         x_start = None
-
+        # sample from `num_timesteps` to 0
         for t in tqdm(reversed(range(0, self.num_timesteps)), desc='sampling loop time step', total=self.num_timesteps):
             self_cond = x_start if self.self_condition else None
             img, x_start, _ = self.p_sample(img, t, self_cond, cond=cond)
@@ -702,14 +702,14 @@ class SinusoidalPosEmb(nn.Module):
         super().__init__()
         self.dim = dim
 
-    def forward(self, x):
+    def forward(self, x):  # eq(5)
         device = x.device
         half_dim = self.dim // 2
         emb = math.log(10000) / (half_dim - 1)
         emb = torch.exp(torch.arange(half_dim, device=device) * -emb)
         emb = x[:, None] * emb[None, :]
         emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
-        return emb
+        return emb  # (..., d_model)
 
 
 class ST_Diffusion(nn.Module):
@@ -789,29 +789,29 @@ class ST_Diffusion(nn.Module):
 
         cond_all = torch.cat((cond, t_embedding), dim=-1)
 
-        alpha_s = F.softmax(self.linear_s(cond_all), dim=-1).squeeze(dim=1)
+        alpha_s = F.softmax(self.linear_s(cond_all), dim=-1).squeeze(dim=1)  # eq(15)
         alpha_t = F.softmax(self.linear_t(cond_all), dim=-1).squeeze(dim=1)
 
         return alpha_s, alpha_t
 
-    def forward(self, x, t, x_self_cond=None, cond=None):
+    def forward(self, x, t, x_self_cond=None, cond=None):  # section 3.4 in paper
 
         x_spatial, x_temporal = x[:, :, 1:].clone(), x[:, :, :1].clone()
 
-        hidden_dim = int(cond.shape[-1] / 3)
+        hidden_dim = int(cond.shape[-1] / 3)  # d_model
 
         cond_temporal, cond_spatial, cond_joint = cond[:, :, :hidden_dim], cond[:, :, hidden_dim:2 *
                                                                                 hidden_dim], cond[:, :, 2 * hidden_dim:]
 
-        cond = self.cond_all(cond)
-        t_embedding = self.time_mlp(t).unsqueeze(dim=1)
+        cond = self.cond_all(cond)  # (bsz, 1, d_model)
+        t_embedding = self.time_mlp(t).unsqueeze(dim=1)  # (bsz, 1, d_model)
 
-        cond_all = torch.cat((cond, t_embedding), dim=-1)
+        cond_all = torch.cat((cond, t_embedding), dim=-1)  # eq(15)
 
-        alpha_s = F.softmax(self.linear_s(cond_all), dim=-1).squeeze(dim=1).unsqueeze(dim=2)
-        alpha_t = F.softmax(self.linear_t(cond_all), dim=-1).squeeze(dim=1).unsqueeze(dim=2)
+        alpha_s = F.softmax(self.linear_s(cond_all), dim=-1).squeeze(dim=1).unsqueeze(dim=2)  # (bsz, 2, 1)
+        alpha_t = F.softmax(self.linear_t(cond_all), dim=-1).squeeze(dim=1).unsqueeze(dim=2)  # (bsz, 2, 1)
 
-        for idx in range(3):
+        for idx in range(3):  # eq(16)
             #t_embedding = embedding_layer(t).unsqueeze(dim=1)
             x_spatial = self.linears_spatial[2 * idx](x_spatial)
             x_temporal = self.linears_temporal[2 * idx](x_temporal)
@@ -832,7 +832,7 @@ class ST_Diffusion(nn.Module):
         x_spatial = self.linears_spatial[-1](x_spatial)
         x_temporal = self.linears_temporal[-1](x_temporal)
 
-        x_output = torch.cat((x_temporal, x_spatial), dim=1)
+        x_output = torch.cat((x_temporal, x_spatial), dim=1)  # (bsz, 2, d_model)
 
         x_output_t = (x_output * alpha_t).sum(dim=1, keepdim=True)
         x_output_s = (x_output * alpha_s).sum(dim=1, keepdim=True)
