@@ -21,16 +21,16 @@ def get_attn_key_pad_mask(seq_k, seq_q):
     # expand to fit the shape of key query attention matrix
     len_q = seq_q.size(1)
     padding_mask = seq_k.eq(Constants.PAD)
-    padding_mask = padding_mask.unsqueeze(1).expand(-1, len_q, -1, -1)  # b x lq x lk x dim
+    padding_mask = padding_mask.unsqueeze(1).expand(-1, len_q, -1, -1)  # b x seqlen_q x seqlen_k x opt.dim
     return padding_mask
 
 
 def get_subsequent_mask(seq, dim=2):
     """ For masking out the subsequent info, i.e., masked self-attention. """
-
+    # 创建上三角矩阵（对角线以上为1，其余为0），即只关注自身和之前的元素
     sz_b, len_s = seq.size()[:2]
     subsequent_mask = torch.triu(torch.ones((dim, len_s, len_s), device=seq.device, dtype=torch.uint8),
-                                 diagonal=1).permute(1, 2, 0)
+                                 diagonal=1).permute(1, 2, 0)  # triu() first operate on the last 2 dim (len_s, len_s)
     subsequent_mask = subsequent_mask.unsqueeze(0).expand(sz_b, -1, -1, -1)  # b x ls x ls x dim
     return subsequent_mask
 
@@ -158,7 +158,7 @@ class Encoder_ST(nn.Module):
         self.position_vec = self.position_vec.to(time)
         result = time.unsqueeze(-1) / self.position_vec
         result[:, :, 0::2] = torch.sin(result[:, :, 0::2])
-        result[:, :, 1::2] = torch.cos(result[:, :, 1::2])
+        result[:, :, 1::2] = torch.cos(result[:, :, 1::2])  # eq(5)
         return result * non_pad_mask
 
     def forward(self, event_loc, event_time, non_pad_mask):
@@ -170,7 +170,7 @@ class Encoder_ST(nn.Module):
         slf_attn_mask_keypad = get_attn_key_pad_mask(seq_k=event_loc, seq_q=event_loc)
         slf_attn_mask_keypad = slf_attn_mask_keypad.type_as(slf_attn_mask_subseq)
 
-        slf_attn_mask = (slf_attn_mask_keypad + slf_attn_mask_subseq).gt(0)
+        slf_attn_mask = (slf_attn_mask_keypad + slf_attn_mask_subseq).gt(0)  # b x seq_len x seq_len x opt.dim
 
         enc_output_temporal = self.temporal_enc(event_time, non_pad_mask)
 

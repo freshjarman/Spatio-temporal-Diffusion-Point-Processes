@@ -356,7 +356,7 @@ class GaussianDiffusion_ST(nn.Module):
                                                                                  clip_denoised=clip_denoised,
                                                                                  cond=cond)
         kl = normal_kl(true_mean, true_log_variance_clipped, model_mean, model_log_variance)
-        kl_all = mean_flat(kl) / np.log(np.e)
+        kl_all = mean_flat(kl) / np.log(np.e)  # DDPM中计算bits-per-dim则除的是np.log(2)
         decoder_nll = -discretized_gaussian_log_likelihood(x_start, model_mean,
                                                            0.5 * model_log_variance)  # 之前是0.5 * model_log_variance
         assert decoder_nll.shape == x_start.shape
@@ -368,7 +368,7 @@ class GaussianDiffusion_ST(nn.Module):
         decoder_nll_temporal = mean_flat(decoder_nll[:, :, :1]) / np.log(np.e)
         decoder_nll_spatial = mean_flat(decoder_nll[:, :, -(self.seq_length - 1):]) / np.log(np.e)
 
-        # At the first timestep return the decoder NLL, otherwise return KL(q(x_{t-1}|x_t,x_0) || p(x_{t-1}|x_t))
+        # At the first timestep return decoder NLL(直接对“生成的 x₀ 与真实 x₀”做似然比较), otherwise return KL(q(x_{t-1}|x_t,x_0) || p(x_{t-1}|x_t))
         assert kl_all.shape == decoder_nll_all.shape == t.shape == torch.zeros([x_start.shape[0]]).shape
         output = torch.where(t == 0, decoder_nll_all, kl_all)
         output_temporal = torch.where(t == 0, decoder_nll_temporal, kl_temporal)
@@ -377,7 +377,7 @@ class GaussianDiffusion_ST(nn.Module):
         return output, output_temporal, output_spatial, pred_xstart
 
     def predict_start_from_noise(self, x_t, t, noise):
-        # Algorithm 2 in paper
+        # x0 = sqrt(1/ᾱ_t) * xt - sqrt(1/ᾱ_t - 1) * ε (refer to eq(2) and paragraph above)
         return (extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t -
                 extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape) * noise)
 
@@ -395,7 +395,7 @@ class GaussianDiffusion_ST(nn.Module):
         return (extract(self.sqrt_alphas_cumprod, t, x_t.shape) * x_t -
                 extract(self.sqrt_one_minus_alphas_cumprod, t, x_t.shape) * v)
 
-    def q_posterior(self, x_start, x_t, t):
+    def q_posterior(self, x_start, x_t, t):  # refer to weng's blog (below Fig.3): q(x_{t-1}|x_t,x_0)
         posterior_mean = (extract(self.posterior_mean_coef1, t, x_t.shape) * x_start +
                           extract(self.posterior_mean_coef2, t, x_t.shape) * x_t)
         posterior_variance = extract(self.posterior_variance, t, x_t.shape)
@@ -403,13 +403,13 @@ class GaussianDiffusion_ST(nn.Module):
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
 
     def q_mean_variance(self, x_start, t):
-        mean = extract(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start
+        mean = extract(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start  # q(x_K|x_0), above eq(2)
         variance = extract(1. - self.alphas_cumprod, t, x_start.shape)
         log_variance = extract(self.log_one_minus_alphas_cumprod, t, x_start.shape)
         return mean, variance, log_variance
 
     def model_predictions(self, x, t, x_self_cond=None, clip_x_start=False, cond=None):
-        model_output = self.model(x, t, x_self_cond, cond=cond)  # (bsz, 1, 1+opt.dim)
+        model_output = self.model(x, t, x_self_cond, cond=cond)  # (bsz, 1, 1+opt.dim), predict_ε sec3.4 in paper
         attn_weight = self.model.get_attn(x, t, x_self_cond, cond=cond)  # tuple of (alpha_s, alpha_t), shape=(bsz, 2)
         maybe_clip = partial(torch.clamp, min=-1., max=1.) if clip_x_start else identity
 
@@ -432,12 +432,12 @@ class GaussianDiffusion_ST(nn.Module):
         return ModelPrediction(pred_noise, x_start), attn_weight
 
     def p_mean_variance(self, x, t, x_self_cond=None, clip_denoised=True, cond=None, Type=None):
-        preds, attn_weight = self.model_predictions(x, t, x_self_cond, cond=cond)  # x: (bsz, 1, 1+opt.dim-1)
-        x_start = preds.pred_x_start  # corresponds to x0 in the paper
+        preds, attn_weight = self.model_predictions(x, t, x_self_cond, cond=cond)  # x: (bsz, 1, 1+opt.dim)
+        x_start = preds.pred_x_start  # the model prediction of x0
 
         if clip_denoised:
             x_start.clamp_(-1., 1.)
-
+        # q(x_{t-1}|x_t,x_0) , refer to weng's blog (below Fig.3)
         model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_start=x_start, x_t=x, t=t)
         return model_mean, posterior_variance, posterior_log_variance, x_start, attn_weight
 
@@ -451,7 +451,7 @@ class GaussianDiffusion_ST(nn.Module):
                                                                                        clip_denoised=clip_denoised,
                                                                                        cond=cond)
         noise = torch.randn_like(x) if t > 0 else 0.  # no noise if t == 0
-        pred_img = model_mean + (0.5 * model_log_variance).exp() * noise
+        pred_img = model_mean + (0.5 * model_log_variance).exp() * noise  # if t=499, it is x_499, x is x_500 (Gaussian)
 
         return pred_img, x_start, attn_weight  # (bsz, 1, 1+opt.dim); tuple of (alpha_s, alpha_t), shape=(bsz, 2)
 
@@ -459,7 +459,7 @@ class GaussianDiffusion_ST(nn.Module):
     def p_sample_loop(self, shape, cond):
         batch, device = shape[0], self.betas.device
 
-        img = torch.randn(shape, device=device)
+        img = torch.randn(shape, device=device)  # Gaussian noise
 
         x_start = None
         # sample from `num_timesteps` to 0
@@ -536,7 +536,7 @@ class GaussianDiffusion_ST(nn.Module):
 
     def q_sample(self, x_start, t, noise=None):
         noise = default(noise, lambda: torch.randn_like(x_start))
-
+        # x_t = sqrt(ᾱ_t) * x_0 + sqrt(1 - ᾱ_t) * ε (refer to eq(2) and paragraph above)
         return (extract(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start +
                 extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise)
 
@@ -552,9 +552,9 @@ class GaussianDiffusion_ST(nn.Module):
             raise ValueError(f'invalid loss type {self.loss_type}')
 
     def p_losses(self, x_start, t, noise=None, cond=None):
-        s0 = time.time()
+        # s0 = time.time()
         b, c, n = x_start.shape
-        noise = default(noise, lambda: torch.randn_like(x_start))
+        noise = default(noise, lambda: torch.randn_like(x_start))  # (bsz, 1, 1+opt.dim)
 
         # noise sample
         x = self.q_sample(x_start=x_start, t=t, noise=noise)
@@ -571,11 +571,11 @@ class GaussianDiffusion_ST(nn.Module):
 
         # predict and take gradient step
 
-        s1 = time.time()
+        # s1 = time.time()
 
-        e1 = time.time()
+        # e1 = time.time()
 
-        model_out = self.model(x, t, x_self_cond, cond)
+        model_out = self.model(x, t, x_self_cond, cond)  # (bsz, 1, 1+opt.dim)
 
         if self.objective == 'pred_noise':
             target = noise
@@ -593,7 +593,7 @@ class GaussianDiffusion_ST(nn.Module):
             loss = self.loss_fn(model_out, target)
         loss = reduce(loss, 'b ... -> b (...)', 'mean')
         loss = loss * extract(self.p2_loss_weight, t, loss.shape)
-        e0 = time.time()
+        # e0 = time.time()
         return loss.mean()
 
     def NLL_cal(self, img, cond, noise=None):
@@ -626,9 +626,9 @@ class GaussianDiffusion_ST(nn.Module):
         return vb_all.sum().item(), vb_temporal_all.sum().item(), vb_spatial_all.sum().item()
 
     def _prior_bpd(self, x_start):
-        """
+        """ !Weng's blog: L_VLB section's L_T
         Get the prior KL term for the variational lower-bound, measured in
-        bits-per-dim.
+        bits-per-dim. ! i.e.`KL(q(x_T|x_0)||p_θ(x_T))`, p_θ(x_T) should act as a std Gaussian.
         This term can't be optimized, as it only depends on the encoder.
         :param x_start: the [N x C x ...] tensor of inputs.
         :return: a batch of [N] KL values (in bits), one per batch element.
@@ -636,14 +636,14 @@ class GaussianDiffusion_ST(nn.Module):
         batch_size = x_start.shape[0]
         t = torch.tensor([self.num_timesteps - 1] * batch_size, device=x_start.device)
         qt_mean, _, qt_log_variance = self.q_mean_variance(x_start, t)
-        kl_prior = normal_kl(mean1=qt_mean, logvar1=qt_log_variance, mean2=0.0, logvar2=0.0)
+        kl_prior = normal_kl(mean1=qt_mean, logvar1=qt_log_variance, mean2=0.0, logvar2=0.0)  # KL(q(x_T|x_0)||N(0,1))
         return mean_flat(kl_prior) / np.log(np.e), mean_flat(kl_prior[:, :, :1]) / np.log(np.e), mean_flat(
             kl_prior[:, :, -(self.seq_length - 1):]) / np.log(np.e)
 
     def NLL_cal(self, x_start, cond, noise=None, clip_denoised=True):
         """
-        Compute the entire variational lower-bound, measured in bits-per-dim,
-        as well as other related quantities.
+        Compute the entire variational lower-bound [sum all steps], measured in bits-per-dim (/log(2) in DDPM),
+        as well as other related quantities. (!Here we /log(e) cuz we don't need bits-per-dim in KL)
         :param model: the model to evaluate loss on.
         :param x_start: the [N x C x ...] tensor of inputs.
         :param clip_denoised: if True, clip denoised samples.
@@ -656,7 +656,7 @@ class GaussianDiffusion_ST(nn.Module):
                  - xstart_mse: an [N x T] tensor of x_0 MSEs for each timestep.
                  - mse: an [N x T] tensor of epsilon MSEs for each timestep.
         """
-        x_start = normalize_to_neg_one_to_one(x_start)
+        x_start = normalize_to_neg_one_to_one(x_start)  # (N, channel=1, 1+opt.dim)
         device = x_start.device
         batch_size = x_start.shape[0]
 
@@ -679,9 +679,9 @@ class GaussianDiffusion_ST(nn.Module):
         vb_temporal_all = torch.sum(torch.cat(vb_temporal_all, dim=-1), dim=-1)
         vb_spatial_all = torch.sum(torch.cat(vb_spatial_all, dim=-1), dim=-1)
 
-        prior_bpd_all, prior_bpd_temporal, prior_bpd_spatial = self._prior_bpd(x_start)
+        prior_bpd_all, prior_bpd_temporal, prior_bpd_spatial = self._prior_bpd(x_start)  # L_T in weng's blog L_VLB
 
-        assert vb_all.shape == prior_bpd_all.shape
+        assert vb_all.shape == prior_bpd_all.shape  # shape = (N)
 
         total_bpd = vb_all + prior_bpd_all
         total_bpd_temporal = vb_temporal_all + prior_bpd_temporal
@@ -795,7 +795,7 @@ class ST_Diffusion(nn.Module):
         return alpha_s, alpha_t
 
     def forward(self, x, t, x_self_cond=None, cond=None):  # section 3.4 in paper
-
+        # x_spatial: (bsz, 1, opt.dim), x_temporal: (bsz, 1, 1)
         x_spatial, x_temporal = x[:, :, 1:].clone(), x[:, :, :1].clone()
 
         hidden_dim = int(cond.shape[-1] / 3)  # d_model
@@ -811,7 +811,7 @@ class ST_Diffusion(nn.Module):
         alpha_s = F.softmax(self.linear_s(cond_all), dim=-1).squeeze(dim=1).unsqueeze(dim=2)  # (bsz, 2, 1)
         alpha_t = F.softmax(self.linear_t(cond_all), dim=-1).squeeze(dim=1).unsqueeze(dim=2)  # (bsz, 2, 1)
 
-        for idx in range(3):  # eq(16)
+        for idx in range(3):  # eq(16), stack 3 layers
             #t_embedding = embedding_layer(t).unsqueeze(dim=1)
             x_spatial = self.linears_spatial[2 * idx](x_spatial)
             x_temporal = self.linears_temporal[2 * idx](x_temporal)
@@ -826,7 +826,7 @@ class ST_Diffusion(nn.Module):
             x_spatial += cond_joint_emb + cond_spatial_emb
             x_temporal += cond_joint_emb + cond_temporal_emb
 
-            x_spatial = self.linears_spatial[2 * idx + 1](x_spatial)
+            x_spatial = self.linears_spatial[2 * idx + 1](x_spatial)  # activation function
             x_temporal = self.linears_temporal[2 * idx + 1](x_temporal)
 
         x_spatial = self.linears_spatial[-1](x_spatial)
@@ -838,7 +838,7 @@ class ST_Diffusion(nn.Module):
         x_output_s = (x_output * alpha_s).sum(dim=1, keepdim=True)
 
         pred = torch.cat((self.output_temporal(x_output_t), self.output_spatial(x_output_s)), dim=-1)
-        return pred
+        return pred  # (bs, 1, 1+opt.dim)
 
 
 class Model_all(nn.Module):

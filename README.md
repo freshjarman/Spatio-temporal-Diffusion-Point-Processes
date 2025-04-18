@@ -47,8 +47,11 @@ python app.py --dataset Independent --mode train --timesteps 500 --samplingsteps
 
 The trained models are saved in ``ModelSave/``.
 
-The logs are saved in ``logs/``.
+The logs are saved in ``logs/``, use `tensorboard` to analyze visually.
 
+``
+tensorboard --logdir=./logs
+``
 
 ## Note
 

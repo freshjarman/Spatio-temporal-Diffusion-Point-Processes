@@ -15,6 +15,7 @@ import os
 from tqdm import tqdm
 import random
 import json
+import datetime
 
 
 def setup_init(args):
@@ -41,7 +42,7 @@ def get_args():
     parser = argparse.ArgumentParser(description='test')
     parser.add_argument('--seed', type=int, default=1234, help='')
     parser.add_argument('--mode', type=str, default='train', help='')
-    parser.add_argument('--total_epochs', type=int, default=20, help='')
+    parser.add_argument('--total_epochs', type=int, default=200, help='')
     parser.add_argument('--machine', type=str, default='none', help='')
     parser.add_argument('--loss_type', type=str, default='l2', choices=['l1', 'l2', 'Euclid'], help='')
     parser.add_argument('--beta_schedule', type=str, default='cosine', choices=['linear', 'cosine'], help='')
@@ -126,7 +127,7 @@ def Batch2toModel(batch, transformer):
     if opt.dim == 2:
         event_time_origin, event_time, lng, lat = map(lambda x: x.to(device), batch)
 
-        event_loc = torch.cat((lng.unsqueeze(dim=2), lat.unsqueeze(dim=2)), dim=-1)
+        event_loc = torch.cat((lng.unsqueeze(dim=2), lat.unsqueeze(dim=2)), dim=-1)  # (batch_size, seq_len, opt.dim)
 
     if opt.dim == 3:
         event_time_origin, event_time, lng, lat, height = map(lambda x: x.to(device), batch)
@@ -142,20 +143,20 @@ def Batch2toModel(batch, transformer):
     enc_out_non_mask = []
     event_time_non_mask = []
     event_loc_non_mask = []
-    for index in range(mask.shape[0]):  # combine all in a long sequence, match condition and event pairwisely
+    for index in range(mask.shape[0]):  # combine all batches in a long sequence, match condition and event pairwisely
         length = int(sum(mask[index]).item())
         if length > 1:
-            enc_out_non_mask += [i.unsqueeze(dim=0) for i in enc_out[index][:length - 1]]  # condition
+            enc_out_non_mask += [i.unsqueeze(dim=0) for i in enc_out[index][:length - 1]]  # condition, drop last one
             event_time_non_mask += [i.unsqueeze(dim=0) for i in event_time[index][1:length]]  # event time
             event_loc_non_mask += [i.unsqueeze(dim=0) for i in event_loc[index][1:length]]  # event loc
 
-    enc_out_non_mask = torch.cat(enc_out_non_mask, dim=0)
+    enc_out_non_mask = torch.cat(enc_out_non_mask, dim=0)  # (batch_all_condition_events, 3 * d_model)
     event_time_non_mask = torch.cat(event_time_non_mask, dim=0)
     event_loc_non_mask = torch.cat(event_loc_non_mask, dim=0)
 
-    event_time_non_mask = event_time_non_mask.reshape(-1, 1, 1)  # (num_all_instances, 1, 1)
-    event_loc_non_mask = event_loc_non_mask.reshape(-1, 1, opt.dim)  # (num_all_instances, 1, dim)
-    # (num_all_instances, 1, 3 * d_model)
+    event_time_non_mask = event_time_non_mask.reshape(-1, 1, 1)  # (batch_all_condition_events, 1, 1)
+    event_loc_non_mask = event_loc_non_mask.reshape(-1, 1, opt.dim)  # (batch_all_condition_events, 1, opt.dim)
+    # (batch_all_condition_events, 1, 3 * d_model)
     enc_out_non_mask = enc_out_non_mask.reshape(event_time_non_mask.shape[0], 1, -1)
 
     return event_time_non_mask, event_loc_non_mask, enc_out_non_mask
@@ -173,8 +174,11 @@ if __name__ == "__main__":
     print('dataset:{}'.format(opt.dataset))
 
     # Specify a directory for logging data
-    logdir = "./logs/{}_timesteps_{}".format(opt.dataset, opt.timesteps)
-    model_path = './ModelSave/dataset_{}_timesteps_{}/'.format(opt.dataset, opt.timesteps)
+    now = datetime.datetime.now()
+    date = now.strftime("%Y-%m-%d-%Hh")
+    logdir = "./logs/{}_timesteps_{}_{}".format(opt.dataset, opt.timesteps, date)
+    # logdir = "./logs/{}_timesteps_{}".format(opt.dataset, opt.timesteps)
+    model_path = './ModelSave/dataset_{}_timesteps_{}_{}/'.format(opt.dataset, opt.timesteps, date)
 
     if not os.path.exists('./ModelSave'):
         os.mkdir('./ModelSave')
@@ -220,7 +224,7 @@ if __name__ == "__main__":
 
         print('epoch:{}'.format(itr))
 
-        if itr % 10 == 0:
+        if (itr % 10 == 0) or (iter == opt.total_epochs - 1):
             print('Evaluate!')
             with torch.no_grad():
 
@@ -234,19 +238,19 @@ if __name__ == "__main__":
 
                     sampled_seq = Model.diffusion.sample(batch_size=event_time_non_mask.shape[0], cond=enc_out_non_mask)
 
-                    sampled_seq_temporal_all, sampled_seq_spatial_all = [], []
-                    for _ in range(100):
-                        sampled_seq = Model.diffusion.sample(batch_size=event_time_non_mask.shape[0],
-                                                             cond=enc_out_non_mask)
-                        sampled_seq_temporal_all.append(
-                            (sampled_seq[:, 0, :1].detach().cpu() + MIN[1]) * (MAX[1] - MIN[1]))
-                        sampled_seq_spatial_all.append(
-                            ((sampled_seq[:, 0, -opt.dim:].detach().cpu() + torch.tensor([MIN[2:]])) *
-                             (torch.tensor([MAX[2:]]) - torch.tensor([MIN[2:]]))).unsqueeze(dim=1))
+                    # sampled_seq_temporal_all, sampled_seq_spatial_all = [], []
+                    # for _ in range(100):  # 准备基于多次采样计算统计指标（如平均RMSE、置信区间等）
+                    #     sampled_seq = Model.diffusion.sample(batch_size=event_time_non_mask.shape[0],
+                    #                                          cond=enc_out_non_mask)
+                    #     sampled_seq_temporal_all.append(  # FIX: origin denormalize is wrong
+                    #         (sampled_seq[:, 0, :1].detach().cpu()) * (MAX[1] - MIN[1]) + MIN[1])
+                    #     sampled_seq_spatial_all.append((sampled_seq[:, 0, -opt.dim:].detach().cpu()) *
+                    #                                    (torch.tensor([MAX[2:]]) - torch.tensor([MIN[2:]])) +
+                    #                                    torch.tensor([MIN[2:]]).unsqueeze(dim=1))
 
                     loss = Model.diffusion(torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1),
                                            enc_out_non_mask)
-
+                    # Variational lower bound to approximate the NLL of the data
                     vb, vb_temporal, vb_spatial = Model.diffusion.NLL_cal(
                         torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
 
@@ -256,19 +260,19 @@ if __name__ == "__main__":
 
                     loss_test_all += loss.item() * event_time_non_mask.shape[0]
 
-                    real = (event_time_non_mask[:, 0, :].detach().cpu() + MIN[1]) * (MAX[1] - MIN[1])
-                    gen = (sampled_seq[:, 0, :1].detach().cpu() + MIN[1]) * (MAX[1] - MIN[1])
+                    real = (event_time_non_mask[:, 0, :].detach().cpu()) * (MAX[1] - MIN[1]) + MIN[1]  # (N, 1)
+                    gen = (sampled_seq[:, 0, :1].detach().cpu()) * (MAX[1] - MIN[1]) + MIN[1]
                     assert real.shape == gen.shape
                     # assert real.shape == sampled_seq_temporal_all.shape
                     mae_temporal += torch.abs(real - gen).sum().item()
                     rmse_temporal += ((real - gen)**2).sum().item()
                     # rmse_temporal_mean += ((real-sampled_seq_temporal_all)**2).sum().item()
 
-                    real = event_loc_non_mask[:, 0, :].detach().cpu()
+                    real = event_loc_non_mask[:, 0, :].detach().cpu()  # (N, 2)
                     assert real.shape[1:] == torch.tensor(MIN[2:]).shape
-                    real = (real + torch.tensor([MIN[2:]])) * (torch.tensor([MAX[2:]]) - torch.tensor([MIN[2:]]))
+                    real = real * (torch.tensor([MAX[2:]]) - torch.tensor([MIN[2:]])) + torch.tensor([MIN[2:]])
                     gen = sampled_seq[:, 0, -opt.dim:].detach().cpu()
-                    gen = (gen + torch.tensor([MIN[2:]])) * (torch.tensor([MAX[2:]]) - torch.tensor([MIN[2:]]))
+                    gen = gen * (torch.tensor([MAX[2:]]) - torch.tensor([MIN[2:]])) + torch.tensor([MIN[2:]])
                     assert real.shape == gen.shape
                     # assert real.shape == sampled_seq_spatial_all.shape  # TODO: sampled_seq_spatial_all is a list, check the logic?
                     mae_spatial += torch.sqrt(torch.sum((real - gen)**2, dim=-1)).sum().item()
@@ -313,9 +317,10 @@ if __name__ == "__main__":
                                   global_step=itr)
                 # writer.add_scalar(tag='Evaluation/distance_spatial_mean_val',scalar_value=mae_spatial_mean/total_num,global_step=itr)
 
-                # test set
+                ### TEST
                 loss_test_all, vb_test_all, vb_test_temporal_all, vb_test_spatial_all = 0.0, 0.0, 0.0, 0.0
                 mae_temporal, rmse_temporal, mae_spatial, mae_lng, mae_lat, total_num = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+                print('TEST!')
                 for batch in testloader:
                     event_time_non_mask, event_loc_non_mask, enc_out_non_mask = Batch2toModel(batch, Model.transformer)
 
@@ -333,7 +338,28 @@ if __name__ == "__main__":
 
                     loss_test_all += loss.item() * event_time_non_mask.shape[0]
 
+                    # TODO: add codes for real和gen来计算MAE for spatial & RMSE for temporal, debugging
+                    real = (event_time_non_mask[:, 0, :].detach().cpu()) * (MAX[1] - MIN[1]) + MIN[1]  # (N, 1)
+                    gen = (sampled_seq[:, 0, :1].detach().cpu()) * (MAX[1] - MIN[1]) + MIN[1]
+                    assert real.shape == gen.shape
+                    # assert real.shape == sampled_seq_temporal_all.shape
+                    mae_temporal += torch.abs(real - gen).sum().item()
+                    rmse_temporal += ((real - gen)**2).sum().item()
+                    # rmse_temporal_mean += ((real-sampled_seq_temporal_all)**2).sum().item()
+
+                    real = event_loc_non_mask[:, 0, :].detach().cpu()  # (N, 2)
+                    assert real.shape[1:] == torch.tensor(MIN[2:]).shape
+                    real = real * (torch.tensor([MAX[2:]]) - torch.tensor([MIN[2:]])) + torch.tensor([MIN[2:]])
+                    gen = sampled_seq[:, 0, -opt.dim:].detach().cpu()
+                    gen = gen * (torch.tensor([MAX[2:]]) - torch.tensor([MIN[2:]])) + torch.tensor([MIN[2:]])
+                    assert real.shape == gen.shape
+                    # assert real.shape == sampled_seq_spatial_all.shape  # TODO: sampled_seq_spatial_all is a list, check the logic?
+                    mae_spatial += torch.sqrt(torch.sum((real - gen)**2, dim=-1)).sum().item()
+                    # mae_spatial_mean += torch.sqrt(torch.sum((real-sampled_seq_spatial_all)**2,dim=-1)).sum().item()
+
                     total_num += gen.shape[0]
+
+                    assert gen.shape[0] == event_time_non_mask.shape[0]
 
                 writer.add_scalar(tag='Evaluation/loss_test', scalar_value=loss_test_all / total_num, global_step=itr)
 
@@ -344,6 +370,19 @@ if __name__ == "__main__":
                 writer.add_scalar(tag='Evaluation/NLL_spatial_test',
                                   scalar_value=vb_test_spatial_all / total_num,
                                   global_step=itr)
+
+                writer.add_scalar(tag='Evaluation/mae_temporal_test',
+                                  scalar_value=mae_temporal / total_num,
+                                  global_step=itr)
+                writer.add_scalar(tag='Evaluation/rmse_temporal_test',
+                                  scalar_value=np.sqrt(rmse_temporal / total_num),
+                                  global_step=itr)
+                # writer.add_scalar(tag='Evaluation/rmse_temporal_mean_test',scalar_value=np.sqrt(rmse_temporal_mean/total_num),global_step=itr)
+
+                writer.add_scalar(tag='Evaluation/distance_spatial_test',
+                                  scalar_value=mae_spatial / total_num,
+                                  global_step=itr)
+                # writer.add_scalar(tag='Evaluation/distance_spatial_mean_test',scalar_value=mae_spatial_mean/total_num,global_step=itr)
 
         if itr < warmup_steps:
             for param_group in optimizer.param_groups:
@@ -356,7 +395,7 @@ if __name__ == "__main__":
                 param_group["lr"] = lr
 
         writer.add_scalar(tag='Statistics/lr', scalar_value=lr, global_step=itr)
-
+        ### TRAIN
         Model.train()
 
         loss_all, vb_all, vb_temporal_all, vb_spatial_all, total_num = 0.0, 0.0, 0.0, 0.0, 0.0
@@ -367,8 +406,8 @@ if __name__ == "__main__":
 
             optimizer.zero_grad()
             loss.backward()
-
             loss_all += loss.item() * event_time_non_mask.shape[0]
+            # Variational lower bound to approximate the NLL of the data
             vb, vb_temporal, vb_spatial = Model.diffusion.NLL_cal(
                 torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
 
@@ -378,12 +417,12 @@ if __name__ == "__main__":
 
             writer.add_scalar(tag='Training/loss_step', scalar_value=loss.item(), global_step=step)
 
-            torch.nn.utils.clip_grad_norm_(Model.parameters(), 1.)
+            torch.nn.utils.clip_grad_norm_(Model.parameters(), 1.)  # 如果总范数超过设定阈值（1），则按比例缩小所有梯度，使总范数等于阈值
             optimizer.step()
 
             step += 1
 
-            total_num += event_time_non_mask.shape[0]
+            total_num += event_time_non_mask.shape[0]  # num of events (to predict) per batch
 
         with torch.cuda.device("cuda:{}".format(opt.cuda_id)):
             torch.cuda.empty_cache()
