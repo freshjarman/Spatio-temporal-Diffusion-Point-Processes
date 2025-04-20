@@ -4,6 +4,7 @@ import torch.nn as nn
 class RF_Model_all(nn.Module):
     """
     封装Spatio-temporal Encoder和Rectified Flow模型
+    Refer to DiffusionModel.py `Model_all` class
     """
 
     def __init__(self, transformer, rf_model):

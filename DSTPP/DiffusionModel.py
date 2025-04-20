@@ -262,6 +262,7 @@ def cosine_beta_schedule(timesteps, s=0.008):
 
 
 class GaussianDiffusion_ST(nn.Module):
+    """Section 3.2 Spatio-temporal Diffusion and Denoising Processes + part of 3.3 (Train & Infer)"""
 
     def __init__(self,
                  model,
@@ -713,6 +714,7 @@ class SinusoidalPosEmb(nn.Module):
 
 
 class ST_Diffusion(nn.Module):
+    """Section 3.4 Co-attention Denoising Network"""
 
     def __init__(self, n_steps, dim, num_units=64, self_condition=False, condition=True, cond_dim=0):
 

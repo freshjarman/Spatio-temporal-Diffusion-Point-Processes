@@ -1,10 +1,13 @@
 import math
 from functools import partial
+from sympy import rf
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from tqdm.auto import tqdm
 import numpy as np
+from torchdiffeq import odeint
+from zmq import device
 
 
 # TODO: 该项目中默认先将数据归一化到[0, 1]，因此下面归一化到[-1, 1]的函数和unnormalize函数是多余的吗？（真unnormalize流程需要根据MAX/MIN重新写）
@@ -21,6 +24,46 @@ def default(val, d):
     if val is not None:
         return val
     return d() if callable(d) else d
+
+
+# --- 1. Hutchinson Trace Estimator for Divergence ---
+def divergence_approx(f, x, t, e=None):
+    """ 计算 f(x, t) 关于 x 的散度的随机近似 """
+    if e is None:
+        e = torch.randn_like(x)
+
+    x_requires_grad = x.requires_grad
+    with torch.enable_grad():
+        x.requires_grad_(True)
+        fx = f(x, t)
+        e_J = torch.autograd.grad(fx, x, e, create_graph=True)[0]
+        e_J_e = (e_J * e).sum(dim=tuple(range(1, x.dim())))
+
+    x.requires_grad_(x_requires_grad)
+    return e_J_e
+
+
+# --- 2. 定义耦合 ODE 的动力学 ---
+class ODEFunc(nn.Module):
+
+    def __init__(self, model_v):
+        super().__init__()
+        self.model_v = model_v
+
+    def forward(self, t, state):
+        x, _ = state
+        batch_size = x.shape[0]
+
+        if t.numel() == 1:
+            t_batch = t.expand(batch_size)
+        else:
+            t_batch = t
+
+        v = self.model_v(x, t_batch)
+        e = torch.randn_like(x)
+        neg_div_v = -divergence_approx(self.model_v, x, t_batch, e)
+
+        return (v, neg_div_v)
 
 
 class RectifiedFlow(nn.Module):
@@ -42,7 +85,7 @@ class RectifiedFlow(nn.Module):
         super().__init__()
         self.model = model
         self.channels = self.model.channels
-        self.seq_length = seq_length  # dim + 1
+        self.seq_length = seq_length  # loc's dim + 1
         self.num_timesteps = timesteps
         self.loss_type = loss_type
         self.use_dynamic_loss_scaling = use_dynamic_loss_scaling
@@ -207,6 +250,33 @@ class RectifiedFlow(nn.Module):
 
         return total_loss, temporal_loss, spatial_loss
 
+    @torch.no_grad()
+    def calculate_log_likelihood(self, x_start, cond=None, rtol=1e-5, atol=1e-5, method='dopri5'):
+        """
+        计算给定数据点 x_start 的精确对数似然 (相对于先验)
+        """
+        self.model.eval()
+
+        ode_func = ODEFunc(self.model)
+
+        x0 = normalize_to_neg_one_to_one(x_start)
+        logp_init = torch.zeros(x0.shape[0], device=x0.device)
+        initial_state = (x0, logp_init)
+
+        t_span = torch.tensor([0.0, 1.0], device=x0.device)
+
+        final_state_tuple = odeint(ode_func, initial_state, t_span, rtol=rtol, atol=atol, method=method)
+
+        x1 = final_state_tuple[0][-1]
+        logp_integral = final_state_tuple[1][-1]
+
+        D = x1.shape[1:].numel()
+        log_prior_p1 = -0.5 * (D * math.log(2 * math.pi) + torch.sum(x1**2, dim=tuple(range(1, x1.dim()))))
+
+        log_likelihood = log_prior_p1 + logp_integral
+
+        return log_likelihood
+
     def forward(self, img, cond):
         """
         模型前向传播：随机采样时间点并计算损失
@@ -223,3 +293,46 @@ class RectifiedFlow(nn.Module):
         # 计算损失
         loss, _, _ = self.p_losses(img, t_indices, cond)
         return loss
+
+
+if __name__ == '__main__':
+    # TODO: 测试代码
+    # 假设你已经定义了一个模型实例 model 和数据 img 和 cond
+    from RF_Diffusion import RF_Diffusion
+    from RF_Model_all import RF_Model_all
+    from Models import Transformer_ST
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    transformer = Transformer_ST(d_model=64,
+                                 d_rnn=256,
+                                 d_inner=128,
+                                 n_layers=4,
+                                 n_head=4,
+                                 d_k=16,
+                                 d_v=16,
+                                 dropout=0.1,
+                                 device=device,
+                                 loc_dim=2,
+                                 CosSin=True).to(device)
+    # rf_diffsuion = RF_Diffusion(n_steps=opt.timesteps, dim=1 + 2, condition=True, cond_dim=64).to(device)
+    # rf = RectifiedFlow(rf_diffsuion,
+    #                    loss_type=opt.loss_type,
+    #                    seq_length=1 + 2,
+    #                    timesteps=opt.timesteps,
+    #                    sampling_timesteps=opt.samplingsteps).to(device)
+    # model = RF_Model_all(transformer, rf)
+
+    # model = None
+
+    img = torch.randn(16, 3, 10)  # 示例数据
+    cond = torch.randn(16, 3, 10)  # 示例条件
+
+    rf_instance = RectifiedFlow(model, seq_length=10)  # seq_length对应数据集的：loc的维度+1(i.e. time)
+    loss = rf_instance(img, cond)
+    print(f'Loss: {loss.item()}')
+
+    # 测试 NLL 计算
+    x_batch = torch.randn(16, 3, 10)  # 示例数据
+    log_likelihoods = rf_instance.calculate_log_likelihood(x_batch)
+    # average_nll = -log_likelihoods.mean() # 计算一个batch内平均负对数似然
+    print(f'Log Likelihoods: {log_likelihoods}')
