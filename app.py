@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import numpy as np
 from DSTPP import GaussianDiffusion_ST, Transformer, Transformer_ST, Model_all, ST_Diffusion
+from DSTPP import RectifiedFlow, RF_Diffusion
+from DSTPP.RF_Model_all import RF_Model_all
 from torch.optim import AdamW, Adam
 import argparse
 from scipy.stats import kstest
@@ -35,6 +37,7 @@ def model_name():
 
 
 def normalization(x, MAX, MIN):
+    # normalize the data to [0, 1]
     return (x - MIN) / (MAX - MIN)
 
 
@@ -60,6 +63,8 @@ def get_args():
     parser.add_argument('--samplingsteps', type=int, default=500, help='')
     parser.add_argument('--objective', type=str, default='pred_noise', help='')
     parser.add_argument('--cuda_id', type=str, default='0', help='')
+    # NEW: 添加模型类型参数
+    parser.add_argument('--model_type', type=str, default='ddpm', choices=['ddpm', 'rf'], help='使用的模型类型')
     args = parser.parse_args()
     args.cuda = torch.cuda.is_available()
     return args
@@ -338,7 +343,7 @@ if __name__ == "__main__":
 
                     loss_test_all += loss.item() * event_time_non_mask.shape[0]
 
-                    # TODO: add codes for real和gen来计算MAE for spatial & RMSE for temporal, debugging
+                    # add codes for real和gen来计算MAE for spatial & RMSE for temporal
                     real = (event_time_non_mask[:, 0, :].detach().cpu()) * (MAX[1] - MIN[1]) + MIN[1]  # (N, 1)
                     gen = (sampled_seq[:, 0, :1].detach().cpu()) * (MAX[1] - MIN[1]) + MIN[1]
                     assert real.shape == gen.shape

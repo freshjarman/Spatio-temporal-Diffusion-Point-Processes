@@ -1,0 +1,225 @@
+import math
+from functools import partial
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from tqdm.auto import tqdm
+import numpy as np
+
+
+# TODO: 该项目中默认先将数据归一化到[0, 1]，因此下面归一化到[-1, 1]的函数和unnormalize函数是多余的吗？（真unnormalize流程需要根据MAX/MIN重新写）
+# 还是说归一化到[-1, 1]是为了保证数据和噪声的均值和尺度更加匹配？从而在线性插值过程中均值始终为0，从而降低v的学习难度？
+def normalize_to_neg_one_to_one(img):
+    return img * 2 - 1
+
+
+def unnormalize_to_zero_to_one(t):
+    return (t + 1) * 0.5
+
+
+def default(val, d):
+    if val is not None:
+        return val
+    return d() if callable(d) else d
+
+
+class RectifiedFlow(nn.Module):
+    """
+    基于Rectified Flow的时空点过程模型
+    学习直接的ODE轨迹而不是逐步去噪过程
+    """
+
+    def __init__(
+            self,
+            model,
+            *,
+            seq_length,
+            timesteps=1000,
+            sampling_timesteps=None,
+            loss_type='l2',
+            use_dynamic_loss_scaling=True,  # 是否使用动态损失缩放
+    ):
+        super().__init__()
+        self.model = model
+        self.channels = self.model.channels
+        self.seq_length = seq_length  # dim + 1
+        self.num_timesteps = timesteps
+        self.loss_type = loss_type
+        self.use_dynamic_loss_scaling = use_dynamic_loss_scaling
+
+        # 采样相关参数
+        self.sampling_timesteps = default(sampling_timesteps, timesteps)
+        assert self.sampling_timesteps <= timesteps
+
+        # 注册时间步长缓冲区 - 从0到1均匀分布
+        self.register_buffer('timesteps', torch.linspace(0, 1, timesteps))
+
+        # 计算损失权重 - 基于Rectified Flow论文的建议
+        if use_dynamic_loss_scaling:
+            # 动态权重随时间变化
+            weight = torch.ones(timesteps)
+            for i in range(timesteps):
+                t = i / (timesteps - 1)
+                # 在t接近0和1时增加权重
+                weight[i] = 1.0 / (0.5 + (t - 0.5)**2)
+            self.register_buffer('loss_weight', weight / weight.mean())
+        else:
+            self.register_buffer('loss_weight', torch.ones(timesteps))
+
+    def straight_path_interpolation(self, x_start, t):
+        """
+        计算直线路径插值
+        x_t = (1-t) * x_start + t * 噪声
+        """
+        noise = torch.randn_like(x_start)
+        x_t = (1 - t.view(-1, 1, 1)) * x_start + t.view(-1, 1, 1) * noise
+        return x_t, noise
+
+    def velocity_vector(self, x_start, t):
+        """
+        计算速度向量: v(x_t, t) = x_0 - x_1
+        对于直线路径：x_1为噪声，x_0为原始数据
+        """
+        noise = torch.randn_like(x_start)
+        x_t, _ = self.straight_path_interpolation(x_start, t)
+
+        # 速度向量指向x_start (从噪声指向数据)
+        velocity = x_start - noise
+
+        return x_t, velocity
+
+    @property
+    def loss_fn(self):
+        if self.loss_type == 'l1':
+            return F.l1_loss
+        elif self.loss_type == 'l2':
+            return F.mse_loss
+        else:
+            raise ValueError(f'invalid loss type {self.loss_type}')
+
+    def p_losses(self, x_start, t_indices, cond=None):
+        """
+        计算损失：预测的速度向量与真实速度向量之间的差异
+        """
+        batch_size = x_start.shape[0]
+
+        # 获取实际时间步长
+        t = self.timesteps[t_indices]
+
+        # 计算当前点和真实速度向量
+        x_t, true_velocity = self.velocity_vector(x_start, t)
+
+        # 模型预测速度向量
+        pred_velocity = self.model(x_t, t, None, cond)
+
+        # 计算损失
+        loss = self.loss_fn(pred_velocity, true_velocity, reduction='none')
+
+        # 区分时间和空间维度的损失
+        loss_temporal = loss[:, :, :1].mean()
+        loss_spatial = loss[:, :, 1:].mean()
+
+        # 应用损失权重
+        if self.use_dynamic_loss_scaling:
+            loss_weight = self.loss_weight[t_indices].view(-1, 1, 1)
+            loss = loss * loss_weight
+
+        loss = loss.mean()
+
+        return loss, loss_temporal, loss_spatial
+
+    @torch.no_grad()
+    def sample(self, batch_size=16, cond=None, steps=None):
+        """
+        从噪声采样生成数据
+        使用预测的速度场进行指导
+        """
+        device = next(self.parameters()).device
+        steps = default(steps, self.sampling_timesteps)
+
+        # 从标准高斯分布开始
+        shape = (batch_size, self.channels, self.seq_length)
+        x = torch.randn(shape, device=device)
+
+        # 时间步长
+        step_size = 1.0 / steps
+
+        # Heun求解器积分步长
+        # 比简单的欧拉法更精确，带有预测-校正步骤
+        for i in tqdm(range(steps), desc='RF sampling'):
+            # 当前时间：从1到0
+            t_now = 1.0 - i * step_size
+            t_next = max(1.0 - (i + 1) * step_size, 0.0)
+
+            t_tensor = torch.full((batch_size, ), t_now, device=device)
+
+            # 预测当前速度
+            v_now = self.model(x, t_tensor, None, cond)
+
+            # 预测步骤(欧拉法)
+            x_pred = x - step_size * v_now
+
+            if t_next > 0:  # 校正步骤，除了最后一步
+                # 在预测位置上评估速度
+                t_tensor_next = torch.full((batch_size, ), t_next, device=device)
+                v_next = self.model(x_pred, t_tensor_next, None, cond)
+
+                # 校正步骤(Heun方法)
+                x = x - 0.5 * step_size * (v_now + v_next)
+            else:
+                x = x_pred  # 最后一步不需要校正
+
+        # 归一化到[0,1]
+        x = unnormalize_to_zero_to_one(x)
+        return x
+
+    def NLL_cal(self, x_start, cond):
+        """
+        计算整个轨迹的负对数似然的近似指标，他不是NLL，但它也是指标越小代表模型越好
+        RF不是显式概率模型，这是启发式方法，即他不是严格的VLB，数值上不能近似NLL
+        """
+        # FIXME: 相较于DiffusionModel.py中的NLL_cal(self, img, cond, noise=None)，这里只是v上的l2损失，数值上应该不完全等于VLB？
+        x_start = normalize_to_neg_one_to_one(x_start)
+        batch_size = x_start.shape[0]
+        device = x_start.device
+
+        # 选择评估点
+        sample_count = min(100, self.num_timesteps)  # 用100个点来近似
+        t_indices = torch.linspace(0, self.num_timesteps - 1, sample_count, dtype=torch.long, device=device)
+
+        total_loss, temporal_loss, spatial_loss = 0.0, 0.0, 0.0
+
+        for idx in t_indices:
+            # 为每个batch样本获取相同的时间点
+            t_batch = torch.full((batch_size, ), idx, device=device, dtype=torch.long)
+
+            with torch.no_grad():
+                loss, loss_temporal, loss_spatial = self.p_losses(x_start, t_batch, cond)
+
+            total_loss += loss.item()
+            temporal_loss += loss_temporal.item()
+            spatial_loss += loss_spatial.item()
+
+        # 计算平均值
+        total_loss /= len(t_indices)
+        temporal_loss /= len(t_indices)
+        spatial_loss /= len(t_indices)
+
+        return total_loss, temporal_loss, spatial_loss
+
+    def forward(self, img, cond):
+        """
+        模型前向传播：随机采样时间点并计算损失
+        """
+        b, c, n, device = *img.shape, img.device
+        assert n == self.seq_length, f'输入序列长度必须为 {self.seq_length}'
+
+        # 随机采样时间索引
+        t_indices = torch.randint(0, self.num_timesteps, (b, ), device=device)
+
+        # 归一化输入
+        img = normalize_to_neg_one_to_one(img)
+
+        # 计算损失
+        loss, _, _ = self.p_losses(img, t_indices, cond)
+        return loss
