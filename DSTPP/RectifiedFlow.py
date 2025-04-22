@@ -28,7 +28,7 @@ def default(val, d):
 
 # --- 1. Hutchinson Trace Estimator for Divergence ---
 def divergence_approx(f, x, t, e=None):
-    """ 计算 f(x, t) 关于 x 的散度的随机近似 """
+    """ 计算 v(x, t) 关于 x 的散度的随机近似 $\nabla \cdot v = \text{Tr}(\nabla v) = \mathbb{E}_{\epsilon}[\epsilon^T (\nabla v) \epsilon] $"""
     if e is None:
         e = torch.randn_like(x)
 
@@ -36,11 +36,12 @@ def divergence_approx(f, x, t, e=None):
     with torch.enable_grad():
         x.requires_grad_(True)
         fx = f(x, t)
+        # 计算 e^T * [ v(x, t) 关于 x 的Jacobian矩阵]
         e_J = torch.autograd.grad(fx, x, e, create_graph=True)[0]
-        e_J_e = (e_J * e).sum(dim=tuple(range(1, x.dim())))
+        e_J_e = (e_J * e).sum(dim=tuple(range(1, x.dim())))  # Sum over all non-batch dims
 
     x.requires_grad_(x_requires_grad)
-    return e_J_e
+    return e_J_e  # 返回每个 batch 元素(v(x,t))的散度的近似值
 
 
 # --- 2. 定义耦合 ODE 的动力学 ---
@@ -51,6 +52,7 @@ class ODEFunc(nn.Module):
         self.model_v = model_v
 
     def forward(self, t, state):
+        # state 是一个元组 (x, logp_integral_accumulator)
         x, _ = state
         batch_size = x.shape[0]
 
@@ -61,9 +63,9 @@ class ODEFunc(nn.Module):
 
         v = self.model_v(x, t_batch)
         e = torch.randn_like(x)
-        neg_div_v = -divergence_approx(self.model_v, x, t_batch, e)
+        neg_div_v = -divergence_approx(self.model_v, x, t_batch, e)  # 计算散度近似 -nabla_x dot v_theta(x, t)
 
-        return (v, neg_div_v)
+        return (v, neg_div_v)  # 返回状态的导数 耦合 ODE 系统的右式
 
 
 class RectifiedFlow(nn.Module):
@@ -253,27 +255,33 @@ class RectifiedFlow(nn.Module):
     @torch.no_grad()
     def calculate_log_likelihood(self, x_start, cond=None, rtol=1e-5, atol=1e-5, method='dopri5'):
         """
-        计算给定数据点 x_start 的精确对数似然 (相对于先验)
+        计算给定数据点 x_start 的精确对数似然 (相对于先验); 目前我们遵循DDPM的模式: x0 is start (real data) x1 is prior (gaussian noise)
         """
         self.model.eval()
 
         ode_func = ODEFunc(self.model)
 
-        x0 = normalize_to_neg_one_to_one(x_start)
-        logp_init = torch.zeros(x0.shape[0], device=x0.device)
+        # initial state for ODE
+        x0 = normalize_to_neg_one_to_one(x_start)  # x0 = x_start
+        logp_init = torch.zeros(x0.shape[0], device=x0.device)  # a0 = 0
         initial_state = (x0, logp_init)
 
-        t_span = torch.tensor([0.0, 1.0], device=x0.device)
+        t_span = torch.tensor([0.0, 1.0], device=x0.device)  # 定义积分时间点 (从 t=0 到 t=1)
 
+        # odeint 返回每个时间点的状态列表，我们只需要最后一个时间点 t=1 的状态
         final_state_tuple = odeint(ode_func, initial_state, t_span, rtol=rtol, atol=atol, method=method)
 
         x1 = final_state_tuple[0][-1]
-        logp_integral = final_state_tuple[1][-1]
+        logp_integral = final_state_tuple[1][-1]  # 累积的 logp 变化 (- integral div v dt)
 
         D = x1.shape[1:].numel()
         log_prior_p1 = -0.5 * (D * math.log(2 * math.pi) + torch.sum(x1**2, dim=tuple(range(1, x1.dim()))))
 
-        log_likelihood = log_prior_p1 + logp_integral
+        # logp(x0) = logp(x1) - integral div v dt
+        log_likelihood = log_prior_p1 + logp_integral  # `+`代表时间上是从T到0的积分（t: T->0）
+
+        # TODO: 实际上如果对应rectified flow是从x0(prior)生成样本x1，
+        # 应该是log_likelihood = log_prior_p1 - logp_integral，但就需要相对应的逆转一下加噪过程
 
         return log_likelihood
 
@@ -303,6 +311,7 @@ if __name__ == '__main__':
     from Models import Transformer_ST
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # create (& load) model
     transformer = Transformer_ST(d_model=64,
                                  d_rnn=256,
                                  d_inner=128,
@@ -324,15 +333,21 @@ if __name__ == '__main__':
 
     # model = None
 
+    # mock data 【！！！shape未必对】
     img = torch.randn(16, 3, 10)  # 示例数据
-    cond = torch.randn(16, 3, 10)  # 示例条件
+    cond = torch.randn(16, 3, 10)  # 示例条件；应该包括 t_i + s_i + h_i-1 参考 eq(10)
 
     rf_instance = RectifiedFlow(model, seq_length=10)  # seq_length对应数据集的：loc的维度+1(i.e. time)
     loss = rf_instance(img, cond)
     print(f'Loss: {loss.item()}')
 
-    # 测试 NLL 计算
+    # ！测试 NLL 计算
     x_batch = torch.randn(16, 3, 10)  # 示例数据
     log_likelihoods = rf_instance.calculate_log_likelihood(x_batch)
-    # average_nll = -log_likelihoods.mean() # 计算一个batch内平均负对数似然
     print(f'Log Likelihoods: {log_likelihoods}')
+    # average_nll = -log_likelihoods.mean() # 计算一个batch内平均负对数似然
+    # print(f'Average NLL: {average_nll}')
+
+    # 测试采样
+    # sampled_data = rf_instance.sample(batch_size=16)
+    # print(f'Sampled Data: {sampled_data.shape}')  # 输出采样数据的形状

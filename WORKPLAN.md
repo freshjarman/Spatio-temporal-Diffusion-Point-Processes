@@ -1,6 +1,11 @@
-## TODO
+## Work Plan Overview
 - [ ] 1. Rectifiedflow framework for DSTPP (model/train/inference)
   - [ ] 1.1 Rectifiedflow model
+    - Spatio-temporal encoder
+      - now use the same `DSTPP/Models/Transformer_ST` as encoder (section 3.1)
+    - Spatio-temporal decoder
+      - `RF_Diffusion`: Co-attention neural network for modeling $v_\theta$ (section 3.4)
+      - `RectifiedFlow`: Rectified flow for training(path interpolation)/sampling/NLL_cal (section 3.2 + 3.3)
   - [ ] 1.2 train
   - [ ] 1.3 inference
     - [ ] Euler sampling (1-order)

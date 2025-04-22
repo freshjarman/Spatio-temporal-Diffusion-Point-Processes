@@ -35,6 +35,7 @@ def get_subsequent_mask(seq, dim=2):
     return subsequent_mask
 
 
+# NOT USED
 class Encoder(nn.Module):
     """ A encoder model with self attention mechanism. """
 
@@ -216,6 +217,7 @@ class RNN_layers(nn.Module):
         return out
 
 
+# NOT USED
 class Transformer(nn.Module):
     """ A sequence to sequence model with attention mechanism. """
 
