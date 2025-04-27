@@ -234,7 +234,8 @@ if __name__ == "__main__":
 
     warmup_steps = 5
 
-    # training
+    # START Training!
+
     optimizer = AdamW(Model.parameters(), lr=1e-3, betas=(0.9, 0.99))
     step, early_stop = 0, 0
     min_loss_test = 1e20
@@ -269,9 +270,14 @@ if __name__ == "__main__":
 
                     loss = Model.diffusion(torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1),
                                            enc_out_non_mask)
-                    # Variational lower bound to approximate the NLL of the data
-                    vb, vb_temporal, vb_spatial = Model.diffusion.NLL_cal(
-                        torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
+
+                    if opt.model_type == 'ddpm':
+                        # Variational lower bound to approximate the NLL of the data
+                        vb, vb_temporal, vb_spatial = Model.diffusion.NLL_cal(
+                            torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
+                    else:  # opt.model_type == 'rf'
+                        vb, vb_temporal, vb_spatial = Model.diffusion.calculate_neg_log_likelihood(
+                            torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
 
                     vb_test_all += vb
                     vb_test_temporal_all += vb_temporal
@@ -348,8 +354,13 @@ if __name__ == "__main__":
                     loss = Model.diffusion(torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1),
                                            enc_out_non_mask)
 
-                    vb, vb_temporal, vb_spatial = Model.diffusion.NLL_cal(
-                        torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
+                    if opt.model_type == 'ddpm':
+                        # Variational lower bound to approximate the NLL of the data
+                        vb, vb_temporal, vb_spatial = Model.diffusion.NLL_cal(
+                            torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
+                    else:  # opt.model_type == 'rf'
+                        vb, vb_temporal, vb_spatial = Model.diffusion.calculate_neg_log_likelihood(
+                            torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
 
                     vb_test_all += vb
                     vb_test_temporal_all += vb_temporal
@@ -426,13 +437,17 @@ if __name__ == "__main__":
             optimizer.zero_grad()
             loss.backward()
             loss_all += loss.item() * event_time_non_mask.shape[0]
-            # Variational lower bound to approximate the NLL of the data
-            vb, vb_temporal, vb_spatial = Model.diffusion.NLL_cal(
-                torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
 
-            vb_all += vb
-            vb_temporal_all += vb_temporal
-            vb_spatial_all += vb_spatial
+            # if opt.model_type == 'ddpm':
+            #     # Variational lower bound to approximate the NLL of the data
+            #     vb, vb_temporal, vb_spatial = Model.diffusion.NLL_cal(
+            #         torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
+            # else:  # opt.model_type == 'rf'
+            #     vb, vb_temporal, vb_spatial = Model.diffusion.calculate_neg_log_likelihood(
+            #         torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
+            # vb_all += vb
+            # vb_temporal_all += vb_temporal
+            # vb_spatial_all += vb_spatial
 
             writer.add_scalar(tag='Training/loss_step', scalar_value=loss.item(), global_step=step)
 
@@ -448,6 +463,7 @@ if __name__ == "__main__":
 
         writer.add_scalar(tag='Training/loss_epoch', scalar_value=loss_all / total_num, global_step=itr)
 
-        writer.add_scalar(tag='Training/NLL_epoch', scalar_value=vb_all / total_num, global_step=itr)
-        writer.add_scalar(tag='Training/NLL_temporal_epoch', scalar_value=vb_temporal_all / total_num, global_step=itr)
-        writer.add_scalar(tag='Training/NLL_spatial_epoch', scalar_value=vb_spatial_all / total_num, global_step=itr)
+        # FIXME: 每个epoch（尤其是训练阶段）没有必要计算NLL吧？有什么用呢？
+        # writer.add_scalar(tag='Training/NLL_epoch', scalar_value=vb_all / total_num, global_step=itr)
+        # writer.add_scalar(tag='Training/NLL_temporal_epoch', scalar_value=vb_temporal_all / total_num, global_step=itr)
+        # writer.add_scalar(tag='Training/NLL_spatial_epoch', scalar_value=vb_spatial_all / total_num, global_step=itr)

@@ -40,8 +40,14 @@
 
 
 ## 2025.4.25
-1. [ ] check and update the model structure (including input -> process -> model -> output) of my `RF-STPP` framework
+1. [x] check and update the model structure (including input -> process -> model -> output) of my `RF-STPP` framework
 
+## 2025.4.27
+1. Fix bugs in `RectifiedFlow.py`, including:
+   1. `calculate_neg_log_likelihood`: to support directly calculating NLL for temporal/spatial/all
+   2. Fix bugs in `ODEFunc` and `divergence_approx` about velocity prediction of nn model
+   3. Update relevent utilization codes in `app_new.py`
+2. Delete NLL Calculation codes during training stage in `app_new.py`, which i think is unnecessary
 
 ## Other detailed settings
 [ ] realize the `SinusodialPosEmb` in `RF_Diffusion/RF_Diffusion` line 19 `self.time_mlp`
