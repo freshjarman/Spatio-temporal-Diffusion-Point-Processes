@@ -111,7 +111,7 @@ def data_loader(writer):
             Min.append(0)
 
     assert Min[1] > 0
-    # normalzie d_time and location (vector)
+    # ! normalzie d_time and location (vector)
     train_data = [[[normalization(i[j], Max[j], Min[j]) for j in range(len(i))] for i in u] for u in train_data]
     test_data = [[[normalization(i[j], Max[j], Min[j]) for j in range(len(i))] for i in u] for u in test_data]
     val_data = [[[normalization(i[j], Max[j], Min[j]) for j in range(len(i))] for i in u] for u in val_data]
@@ -139,7 +139,7 @@ def Batch2toModel(batch, transformer):
 
         event_loc = torch.cat((lng.unsqueeze(dim=2), lat.unsqueeze(dim=2), height.unsqueeze(dim=2)), dim=-1)
 
-    event_time = event_time.to(device)
+    event_time = event_time.to(device)  # normalized d_time ∈ [0, 1]
     event_time_origin = event_time_origin.to(device)
     event_loc = event_loc.to(device)
 
@@ -152,12 +152,12 @@ def Batch2toModel(batch, transformer):
         length = int(sum(mask[index]).item())
         if length > 1:
             enc_out_non_mask += [i.unsqueeze(dim=0) for i in enc_out[index][:length - 1]]  # condition, drop last one
-            event_time_non_mask += [i.unsqueeze(dim=0) for i in event_time[index][1:length]]  # event time
+            event_time_non_mask += [i.unsqueeze(dim=0) for i in event_time[index][1:length]]  # event time, drop first 1
             event_loc_non_mask += [i.unsqueeze(dim=0) for i in event_loc[index][1:length]]  # event loc
 
     enc_out_non_mask = torch.cat(enc_out_non_mask, dim=0)  # (batch_all_condition_events, 3 * d_model)
-    event_time_non_mask = torch.cat(event_time_non_mask, dim=0)
-    event_loc_non_mask = torch.cat(event_loc_non_mask, dim=0)
+    event_time_non_mask = torch.cat(event_time_non_mask, dim=0)  # (batch_all_condition_events, )
+    event_loc_non_mask = torch.cat(event_loc_non_mask, dim=0)  # (batch_all_condition_events, opt.dim)
 
     event_time_non_mask = event_time_non_mask.reshape(-1, 1, 1)  # (batch_all_condition_events, 1, 1)
     event_loc_non_mask = event_loc_non_mask.reshape(-1, 1, opt.dim)  # (batch_all_condition_events, 1, opt.dim)
@@ -254,7 +254,8 @@ if __name__ == "__main__":
                 for batch in valloader:
                     event_time_non_mask, event_loc_non_mask, enc_out_non_mask = Batch2toModel(batch, Model.transformer)
 
-                    sampled_seq = Model.diffusion.sample(batch_size=event_time_non_mask.shape[0], cond=enc_out_non_mask)
+                    sampled_seq = Model.diffusion.sample(batch_size=event_time_non_mask.shape[0],
+                                                         cond=enc_out_non_mask)  # [bsz, 1, dim]
 
                     # sampled_seq_temporal_all, sampled_seq_spatial_all = [], []
                     # for _ in range(100):  # 准备基于多次采样计算统计指标（如平均RMSE、置信区间等）

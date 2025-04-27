@@ -103,7 +103,7 @@ class Encoder(nn.Module):
 
 
 class Encoder_ST(nn.Module):
-    """ A encoder model with self attention mechanism. """
+    """Section 3.1: A encoder model with self attention mechanism. """
 
     def __init__(self, d_model, d_inner, n_layers, n_head, d_k, d_v, dropout, device, loc_dim, CosSin=False):
         super().__init__()
@@ -177,9 +177,9 @@ class Encoder_ST(nn.Module):
 
         enc_output_loc = self.event_emb_loc(event_loc)
 
-        enc_output = enc_output_temporal + enc_output_loc
+        enc_output = enc_output_temporal + enc_output_loc  # b x seq_len x d_model
 
-        slf_attn_mask = slf_attn_mask[:, :, :, 0]
+        slf_attn_mask = slf_attn_mask[:, :, :, 0]  # [b x seq_len x seq_len]
 
         for index in range(len(self.layer_stack)):
             enc_output_loc, _ = self.layer_stack_loc[index](enc_output_loc,
@@ -271,7 +271,7 @@ class Transformer(nn.Module):
 
 
 class Transformer_ST(nn.Module):
-    """ A sequence to sequence model with attention mechanism. """
+    """ Section 3.1 + RNN: A sequence to sequence model with attention mechanism. """
 
     def __init__(self,
                  d_model=256,
@@ -318,7 +318,7 @@ class Transformer_ST(nn.Module):
         Output: enc_output: batch*seq_len*model_dim
         """
 
-        non_pad_mask = get_non_pad_mask(event_time)
+        non_pad_mask = get_non_pad_mask(event_time)  # bsz x seq_len x 1
         # bsz x seq_len x d_model
         enc_output, enc_output_temporal, enc_output_loc = self.encoder(event_loc, event_time, non_pad_mask)
 

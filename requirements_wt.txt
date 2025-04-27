@@ -1,0 +1,4 @@
+einops
+torchdiffeq
+
+# 其他参考app_new.py基本就可以

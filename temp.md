@@ -239,3 +239,217 @@ $$ \log p_0(x_0) = \log p_1(x_1) - a_1 $$
 $$ \log p_0(x_0) = \log p_1(x_1) - \left( - \int_0^1 \nabla \cdot v_\theta dt \right) = \log p_1(x_1) + \int_0^1 \nabla \cdot v_\theta dt $$
 这与基于瞬时变量变换或 Fokker-Planck 方程推导出的标准公式是一致的（假设 ODE $\frac{dx_t}{dt}=v_\theta$ 描述的是从 $t=0$ (数据) 到 $t=1$ (先验) 的过程）。
 
+##
+
+Okay, let's break down the "standard" Rectified Flow setup for calculating the log-likelihood of real data.
+
+**Standard Rectified Flow Setup:**
+
+1.  **Path Definition**: $x_t = (1-t)x_0 + t x_1$
+2.  **Endpoints**:
+    *   $t=0$: Noise $x_0 \sim p_0(\cdot)$, typically a standard Gaussian $N(0, I)$.
+    *   $t=1$: Real Data $x_1 \sim p_{data}(\cdot)$ (the distribution we want the model to learn, denoted as $p_1$ by the model).
+3.  **Velocity Field**: The velocity along this path is $\frac{dx_t}{dt} = x_1 - x_0$.
+4.  **Model's Goal**: The neural network $v_\theta(x_t, t)$ is trained to approximate this velocity: $v_\theta(x_t, t) \approx x_1 - x_0$. This is the **forward** velocity field (time increasing from 0 to 1).
+
+**Goal: Calculate $\log p_1(x_1)$**
+
+We are given a real data point $x_1$ and want to calculate its log-likelihood under the distribution $p_1$ implicitly defined by the model and the prior $p_0$.
+
+**Derivation using Change of Variables:**
+
+1.  **Formula**: The standard instantaneous change of variables formula relates the densities along the trajectory defined by the ODE $\frac{dx_t}{dt} = f(x_t, t)$:
+    $$ \frac{d (\log p(x_t, t))}{dt} = - \nabla \cdot f(x_t, t) $$
+2.  **Identify $f(x_t, t)$**: In this standard setup, the relevant ODE describes the evolution *from noise to data* (forward in time $t=0 \to 1$). The velocity field for this is $f(x_t, t) = v_\theta(x_t, t) \approx x_1 - x_0$.
+3.  **Apply Formula**: Substitute $f = v_\theta$:
+    $$ \frac{d (\log p(x_t, t))}{dt} = - \nabla \cdot v_\theta(x_t, t) $$
+4.  **Integrate**: Integrate both sides from $t=0$ to $t=1$:
+    $$ \int_0^1 \frac{d (\log p(x_t, t))}{dt} dt = \int_0^1 - \nabla \cdot v_\theta(x_t, t) dt $$
+    $$ \log p(x_1, 1) - \log p(x_0, 0) = - \int_0^1 \nabla \cdot v_\theta(x_t, t) dt $$
+    $$ \log p_1(x_1) - \log p_0(x_0) = - \int_0^1 \nabla \cdot v_\theta(x_t, t) dt $$
+5.  **Solve for $\log p_1(x_1)$**:
+    $$ \log p_1(x_1) = \log p_0(x_0) - \int_0^1 \nabla \cdot v_\theta(x_t, t) dt $$
+
+**How to Compute This? The Backward Integration Approach:**
+
+The formula requires:
+*   The specific noise $x_0$ that maps to our given data $x_1$ under the forward flow.
+*   The integral of the divergence along the path connecting $x_0$ and $x_1$.
+
+To find $x_0$ and compute the integral simultaneously, we need to solve an ODE system **backward** in time, starting from the known data $x_1$.
+
+1.  **Define Backward Time**: Let $s = 1-t$. As $t$ goes $0 \to 1$, $s$ goes $1 \to 0$.
+2.  **Define Backward State**: Let $y_s = x_{1-s}$. So $y_0 = x_1$ (our data) and $y_1 = x_0$ (the corresponding noise).
+3.  **Derive Backward ODE**:
+    $$ \frac{dy_s}{ds} = \frac{dx_{1-s}}{d(1-s)} \frac{d(1-s)}{ds} = v_\theta(x_{1-s}, 1-s) \times (-1) = -v_\theta(y_s, 1-s) $$
+    Let $g(y_s, s) = -v_\theta(y_s, 1-s)$ be the backward velocity field.
+4.  **Augmented Backward ODE System**: We want to compute $x_0 = y_1$ and the integral term. Notice the integral in the formula for $\log p_1(x_1)$ involves $\nabla \cdot v_\theta$. Let's define an accumulator $a_s$ such that its derivative with respect to the *backward time* $s$ is the integrand we need, evaluated along the backward path.
+    *   We need $\int_0^1 \nabla \cdot v_\theta(x_t, t) dt$. Let's see how this relates to an integral over $s$.
+    *   $dt = -ds$. When $t=0, s=1$. When $t=1, s=0$.
+    *   $\int_0^1 \nabla \cdot v_\theta(x_t, t) dt = \int_1^0 \nabla \cdot v_\theta(y_s, 1-s) (-ds) = \int_0^1 \nabla \cdot v_\theta(y_s, 1-s) ds$.
+    *   So, we define $a_s$ such that $\frac{da_s}{ds} = \nabla \cdot v_\theta(y_s, 1-s)$.
+    *   The backward ODE system to solve from $s=0$ to $s=1$ is:
+        $$ \frac{d}{ds} \begin{pmatrix} y_s \\ a_s \end{pmatrix} = \begin{pmatrix} -v_\theta(y_s, 1-s) \\ +\nabla \cdot v_\theta(y_s, 1-s) \end{pmatrix} $$
+    *   Initial condition: $(y_0, a_0) = (x_1, 0)$.
+    *   Final state at $s=1$: $(y_1, a_1) = (x_0, \int_0^1 \nabla \cdot v_\theta(y_s, 1-s) ds)$.
+5.  **Final Calculation**:
+    *   From step 4, $a_1 = \int_0^1 \nabla \cdot v_\theta(y_s, 1-s) ds = \int_0^1 \nabla \cdot v_\theta(x_t, t) dt$.
+    *   Substitute this into the formula from step 5 of the derivation:
+        $$ \log p_1(x_1) = \log p_0(x_0) - a_1 $$
+    *   We calculate $\log p_0(x_0)$ using the known prior distribution (e.g., standard Gaussian PDF) evaluated at the computed $x_0 = y_1$.
+
+**Code Implementation:**
+
+We need a new `ODEFuncBackward` and a corresponding `calculate_log_likelihood_standard` method.
+
+```python
+# ... (Keep existing imports, helpers, divergence_approx, ODEFunc, RectifiedFlow class structure) ...
+
+# --- 3. 定义用于标准RF对数似然计算的反向ODE动力学 ---
+class ODEFuncBackward(nn.Module):
+    """
+    Defines the dynamics for the backward ODE system (standard RF setup):
+    dy/ds = -v_theta(y, 1-s)      (Backward ODE velocity field g = -v_theta(y, 1-s))
+    da/ds = +div_y v_theta(y, 1-s) (Accumulator for the integral term needed in log p1 formula)
+    where s = 1-t is the backward time, y_s = x_{1-s}.
+    Integrate s from 0 (data x1) to 1 (noise x0).
+    """
+    def __init__(self, model_v):
+        super().__init__()
+        self.model_v = model_v # model_v learns v_theta approx x1 - x0 (forward velocity)
+
+    def forward(self, s, state):
+        y, _ = state # a is not used in calculating derivatives
+        batch_size = y.shape[0]
+
+        # Ensure s is broadcastable
+        if s.numel() == 1:
+            s_batch = s.expand(batch_size)
+        else:
+            s_batch = s
+
+        # Calculate corresponding forward time t = 1-s
+        t_batch = 1.0 - s_batch
+
+        # Calculate v_theta(y, t) = v_theta(y_s, 1-s)
+        # Note: The model v_theta is always called with the *forward* time t
+        v_theta = self.model_v(y, t_batch)
+
+        # Calculate divergence of v_theta(y, t) w.r.t y
+        e = torch.randn_like(y)
+        # divergence_approx needs the function (model_v), input (y), and *forward* time (t_batch)
+        div_v_theta = divergence_approx(self.model_v, y, t_batch, e)
+
+        # Dynamics for backward time s:
+        dyds = -v_theta      # dy/ds = -v_theta(y, 1-s)
+        dads = +div_v_theta  # da/ds = +div(v_theta(y, 1-s))
+
+        return (dyds, dads)
+
+class RectifiedFlow(nn.Module):
+    # ... (Existing __init__, straight_path_interpolation, velocity_vector, loss_fn, p_losses, sample, NLL_cal) ...
+    # ... (Keep the existing calculate_log_likelihood for the x0-x1 setup) ...
+
+    @torch.no_grad()
+    def calculate_log_likelihood_standard(self, x1_data, cond=None, rtol=1e-5, atol=1e-5, method='dopri5'):
+        """
+        Calculates the exact log-likelihood log p1(x1) for the STANDARD Rectified Flow setup.
+        Standard setup: x0=noise, x1=data, v_theta learns x1 - x0.
+        Integrates the backward ODE dy/ds = -v_theta(y, 1-s) from s=0 (data x1) to s=1 (noise x0).
+        """
+        self.model.eval()
+
+        # Define the backward ODE function
+        ode_func_backward = ODEFuncBackward(self.model)
+
+        # Normalize the input data x1 (assuming it's in original space e.g., [0, 1])
+        x1_norm = normalize_to_neg_one_to_one(x1_data) # Start at real data x1 (s=0)
+
+        # Initial accumulator value
+        a0 = torch.zeros(x1_norm.shape[0], device=x1_norm.device)
+        initial_state = (x1_norm, a0)
+
+        # Integrate backward time s from 0 to 1
+        s_span = torch.tensor([0.0, 1.0], device=x1_norm.device)
+
+        # Solve the backward ODE system
+        final_state_tuple = odeint(ode_func_backward, initial_state, s_span, rtol=rtol, atol=atol, method=method)
+
+        # Get the state at s=1
+        x0_final = final_state_tuple[0][-1]  # State y1 = x0 (should approx noise)
+        a1_final = final_state_tuple[1][-1]  # Accumulated divergence a1 = integral[0,1] div(v_theta) ds
+
+        # Calculate log prior probability of the resulting noise x0
+        # Assumes prior p0 is N(0, I) in the *normalized* space [-1, 1]
+        D = x0_final.shape[1:].numel()
+        log_prior_p0 = -0.5 * (D * math.log(2 * math.pi) + torch.sum(x0_final**2, dim=tuple(range(1, x0_final.dim()))))
+
+        # Final formula: log p1(x1) = log p0(x0) - a1
+        log_likelihood_p1 = log_prior_p0 - a1_final
+
+        return log_likelihood_p1
+
+    # ... (Existing forward method and __main__ block) ...
+
+# --- Update __main__ block to test the new function ---
+if __name__ == '__main__':
+    # ... (Keep existing setup for mock model, rf_instance etc.) ...
+
+    # --- Assuming the model was trained in the STANDARD way (v_theta learns x1-x0) ---
+    # --- If your current model learns x0-x1, this test won't be meaningful unless you retrain ---
+
+    print("\n--- Testing Standard RF Log Likelihood (Assumes v_theta learns x1-x0) ---")
+    # Create some mock "real" data x1
+    x1_batch = torch.rand(batch_size, channels, seq_len, device=device) # Mock data in [0, 1]
+
+    # Calculate log likelihood log p1(x1)
+    # Use the new function: calculate_log_likelihood_standard
+    try:
+        log_likelihoods_p1 = rf_instance.calculate_log_likelihood_standard(x1_batch)
+        print(f'Log Likelihoods p1(x1) shape: {log_likelihoods_p1.shape}')
+        print(f'Example Log Likelihood p1(x1): {log_likelihoods_p1[0].item()}')
+        average_nll_p1 = -log_likelihoods_p1.mean()
+        print(f'Average NLL p1(x1): {average_nll_p1.item()}')
+    except Exception as e:
+        print(f"Could not run standard LL calculation, possibly due to model setup mismatch: {e}")
+
+    # --- Keep the tests for the other setup (v_theta learns x0-x1) ---
+    print("\n--- Testing Original RF Log Likelihood (Assumes v_theta learns x0-x1) ---")
+    # Use the original function: calculate_log_likelihood
+    x0_batch = torch.rand(batch_size, channels, seq_len, device=device) # Mock data in [0, 1]
+    try:
+        log_likelihoods_p0 = rf_instance.calculate_log_likelihood(x0_batch)
+        print(f'Log Likelihoods p0(x0) shape: {log_likelihoods_p0.shape}')
+        print(f'Example Log Likelihood p0(x0): {log_likelihoods_p0[0].item()}')
+        average_nll_p0 = -log_likelihoods_p0.mean()
+        print(f'Average NLL p0(x0): {average_nll_p0.item()}')
+    except Exception as e:
+        print(f"Could not run original LL calculation: {e}")
+
+
+    # --- Keep sampling test ---
+    print("\n--- Testing Sampling ---")
+    # Sampling should work regardless of which direction v_theta learns,
+    # as long as the sample() function uses the correct update rule (+ or -)
+    sampled_data = rf_instance.sample(batch_size=4)
+    print(f'Sampled Data shape: {sampled_data.shape}')
+    print(f'Sampled Data range: min={sampled_data.min().item()}, max={sampled_data.max().item()}')
+
+```
+
+**Key Differences Summarized:**
+
+| Feature             | Your Setup ($v_\theta \approx x_0-x_1$) | Standard Setup ($v_\theta \approx x_1-x_0$) |
+| :------------------ | :--------------------------------------- | :---------------------------------------- |
+| **Goal**            | Calculate $\log p_0(x_0)$                | Calculate $\log p_1(x_1)$                 |
+| **ODE Start**       | Data $x_0$ (at $t=0$)                    | Data $x_1$ (at $s=0$, which is $t=1$)     |
+| **ODE End**         | Noise $x_1$ (at $t=1$)                   | Noise $x_0$ (at $s=1$, which is $t=0$)    |
+| **ODE Direction**   | Forward ($t=0 \to 1$)                    | Backward ($s=0 \to 1$)                    |
+| **ODE for x/y**     | $dx/dt = -v_\theta(x, t)$                | $dy/ds = -v_\theta(y, 1-s)$               |
+| **ODE for a**       | $da/dt = +\nabla \cdot v_\theta(x, t)$   | $da/ds = +\nabla \cdot v_\theta(y, 1-s)$  |
+| **Final Formula**   | $\log p_0(x_0) = \log p_1(x_1) - a_1$    | $\log p_1(x_1) = \log p_0(x_0) - a_1$    |
+| **Known Prior**     | $\log p_1(x_1)$ (Gaussian at $t=1$)      | $\log p_0(x_0)$ (Gaussian at $t=0$)       |
+| **ODE Func Class**  | `ODEFunc`                                | `ODEFuncBackward`                         |
+| **LL Calc Method**  | `calculate_log_likelihood`               | `calculate_log_likelihood_standard`       |
+
+Remember to use the correct likelihood calculation function based on how your specific model `v_theta` was trained.

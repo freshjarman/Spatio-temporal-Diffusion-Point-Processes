@@ -10,8 +10,8 @@ from torchdiffeq import odeint
 from zmq import device
 
 
-# TODO: 该项目中默认先将数据归一化到[0, 1]，因此下面归一化到[-1, 1]的函数和unnormalize函数是多余的吗？（真unnormalize流程需要根据MAX/MIN重新写）
 # 还是说归一化到[-1, 1]是为了保证数据和噪声的均值和尺度更加匹配？从而在线性插值过程中均值始终为0，从而降低v的学习难度？
+# 这点选择了和DSTPP的实现（class GaussianDiffusion_ST）保持一致
 def normalize_to_neg_one_to_one(img):
     return img * 2 - 1
 
@@ -28,7 +28,7 @@ def default(val, d):
 
 # --- 1. Hutchinson Trace Estimator for Divergence ---
 def divergence_approx(f, x, t, e=None):
-    """ 计算 v(x, t) 关于 x 的散度的随机近似 $\nabla \cdot v = \text{Tr}(\nabla v) = \mathbb{E}_{\epsilon}[\epsilon^T (\nabla v) \epsilon] $"""
+    # 计算 v(x, t) 关于 x 的散度的随机近似 $\nabla \cdot v = \text{Tr}(\nabla v) = \mathbb{E}_{\epsilon}[\epsilon^T (\nabla v) \epsilon] $
     if e is None:
         e = torch.randn_like(x)
 
@@ -41,15 +41,20 @@ def divergence_approx(f, x, t, e=None):
         e_J_e = (e_J * e).sum(dim=tuple(range(1, x.dim())))  # Sum over all non-batch dims
 
     x.requires_grad_(x_requires_grad)
-    return e_J_e  # 返回每个 batch 元素(v(x,t))的散度的近似值
+    return e_J_e  # 返回每个 batch 元素(v(x,t))的散度 的近似值
 
 
 # --- 2. 定义耦合 ODE 的动力学 ---
 class ODEFunc(nn.Module):
+    """
+    Defines the dynamics for the coupled ODE system:
+    dx/dt = -v_theta(x, t)      (Forward ODE velocity field f = -v_theta)
+    da/dt = +div_x v_theta(x, t) (Because d(log p)/dt = -div(f) = -div(-v_theta) = +div(v_theta))
+    """
 
     def __init__(self, model_v):
         super().__init__()
-        self.model_v = model_v
+        self.model_v = model_v  # model_v learns v_theta approx x0 - x1
 
     def forward(self, t, state):
         # state 是一个元组 (x, logp_integral_accumulator)
@@ -61,11 +66,19 @@ class ODEFunc(nn.Module):
         else:
             t_batch = t
 
-        v = self.model_v(x, t_batch)
-        e = torch.randn_like(x)
-        neg_div_v = -divergence_approx(self.model_v, x, t_batch, e)  # 计算散度近似 -nabla_x dot v_theta(x, t)
+        # Calculate v_theta (learned velocity, approx x0 - x1)
+        v_theta = self.model_v(x, t_batch)
 
-        return (v, neg_div_v)  # 返回状态的导数 耦合 ODE 系统的右式
+        # Calculate divergence of v_theta using Hutchinson estimator
+        e = torch.randn_like(x)
+        # divergence_approx returns approximation of div(v_theta)
+        div_v_theta = divergence_approx(self.model_v, x, t_batch, e)
+
+        # Dynamics:
+        dxdt = -v_theta  # Forward ODE velocity field f = -v_theta
+        dadt = div_v_theta  # Corrected: da/dt = +div(v_theta)
+
+        return (dxdt, dadt)  # 返回耦合 ODE 系统的右式（即如上的两个ODE的右式）
 
 
 class RectifiedFlow(nn.Module):
@@ -111,12 +124,13 @@ class RectifiedFlow(nn.Module):
         else:
             self.register_buffer('loss_weight', torch.ones(timesteps))
 
-    def straight_path_interpolation(self, x_start, t):
+    def straight_path_interpolation(self, x_start, t, noise=None):
         """
         计算直线路径插值
         x_t = (1-t) * x_start + t * 噪声
         """
-        noise = torch.randn_like(x_start)
+        if noise is None:
+            noise = torch.randn_like(x_start)
         x_t = (1 - t.view(-1, 1, 1)) * x_start + t.view(-1, 1, 1) * noise
         return x_t, noise
 
@@ -126,7 +140,7 @@ class RectifiedFlow(nn.Module):
         对于直线路径：x_1为噪声，x_0为原始数据
         """
         noise = torch.randn_like(x_start)
-        x_t, _ = self.straight_path_interpolation(x_start, t)
+        x_t, _ = self.straight_path_interpolation(x_start, t, noise)  # noise要保证和x_start唯一对应
 
         # 速度向量指向x_start (从噪声指向数据)
         velocity = x_start - noise
@@ -174,10 +188,16 @@ class RectifiedFlow(nn.Module):
         return loss, loss_temporal, loss_spatial
 
     @torch.no_grad()
-    def sample(self, batch_size=16, cond=None, steps=None):
+    def sample(self, batch_size=16, cond=None, steps=None, euler_only=False):
         """
         从噪声采样生成数据
         使用预测的速度场进行指导
+        
+        参数:
+            batch_size: 生成样本数量
+            cond: 条件信息
+            steps: 采样步数，默认使用初始化时指定的步数
+            euler_only: 是否只使用欧拉法 (一阶)，默认False使用Heun法 (二阶)
         """
         device = next(self.parameters()).device
         steps = default(steps, self.sampling_timesteps)
@@ -189,9 +209,9 @@ class RectifiedFlow(nn.Module):
         # 时间步长
         step_size = 1.0 / steps
 
-        # Heun求解器积分步长
-        # 比简单的欧拉法更精确，带有预测-校正步骤
-        for i in tqdm(range(steps), desc='RF sampling'):
+        # 积分步长 - 欧拉法或Heun法，比简单的欧拉法更精确（2-order），带有预测-校正步骤
+        solver_name = "Euler" if euler_only else "Heun"
+        for i in tqdm(range(steps), desc=f'RF sampling with ({solver_name}) solver'):
             # 当前时间：从1到0
             t_now = 1.0 - i * step_size
             t_next = max(1.0 - (i + 1) * step_size, 0.0)
@@ -202,17 +222,17 @@ class RectifiedFlow(nn.Module):
             v_now = self.model(x, t_tensor, None, cond)
 
             # 预测步骤(欧拉法)
-            x_pred = x - step_size * v_now
+            x_pred = x + step_size * v_now
 
-            if t_next > 0:  # 校正步骤，除了最后一步
+            if not euler_only and t_next > 0:  # 只有在非欧拉模式且非最后一步时执行校正步骤
                 # 在预测位置上评估速度
                 t_tensor_next = torch.full((batch_size, ), t_next, device=device)
                 v_next = self.model(x_pred, t_tensor_next, None, cond)
 
                 # 校正步骤(Heun方法)
-                x = x - 0.5 * step_size * (v_now + v_next)
+                x = x + 0.5 * step_size * (v_now + v_next)
             else:
-                x = x_pred  # 最后一步不需要校正
+                x = x_pred  # 欧拉法或最后一步
 
         # 归一化到[0,1]
         x = unnormalize_to_zero_to_one(x)
@@ -255,33 +275,37 @@ class RectifiedFlow(nn.Module):
     @torch.no_grad()
     def calculate_log_likelihood(self, x_start, cond=None, rtol=1e-5, atol=1e-5, method='dopri5'):
         """
-        计算给定数据点 x_start 的精确对数似然 (相对于先验); 目前我们遵循DDPM的模式: x0 is start (real data) x1 is prior (gaussian noise)
+        Calculates the exact log-likelihood log p0(x0) using the change of variables formula.
+        Integrates the forward ODE dx/dt = -v_theta(x, t) from t=0 to t=1.
         """
         self.model.eval()
 
+        # ODEFunc now correctly defines the forward dynamics dx/dt = -v_theta
+        # and the log-density accumulator da/dt = +div(v_theta)
+        # logp1(x1) = logp0(x0) + integral[0,1] da/dt dt
         ode_func = ODEFunc(self.model)
 
-        # initial state for ODE
-        x0 = normalize_to_neg_one_to_one(x_start)  # x0 = x_start
-        logp_init = torch.zeros(x0.shape[0], device=x0.device)  # a0 = 0
-        initial_state = (x0, logp_init)
+        x0_norm = normalize_to_neg_one_to_one(x_start)  # Start at real data x0 (t=0)
+        a0 = torch.zeros(x0_norm.shape[0], device=x0_norm.device)  # Initial logp accumulator
+        initial_state = (x0_norm, a0)
 
-        t_span = torch.tensor([0.0, 1.0], device=x0.device)  # 定义积分时间点 (从 t=0 到 t=1)
+        t_span = torch.tensor([0.0, 1.0], device=x0_norm.device)  # Integrate forward t=0 to t=1
 
-        # odeint 返回每个时间点的状态列表，我们只需要最后一个时间点 t=1 的状态
         final_state_tuple = odeint(ode_func, initial_state, t_span, rtol=rtol, atol=atol, method=method)
 
-        x1 = final_state_tuple[0][-1]
-        logp_integral = final_state_tuple[1][-1]  # 累积的 logp 变化 (- integral div v dt)
+        x1 = final_state_tuple[0][-1]  # State at t=1 (should approx noise)
+        a1 = final_state_tuple[1][-1]  # Accumulated logp change a1 = integral[0,1] da/dt dt
 
+        # Calculate log prior probability of the state at t=1
         D = x1.shape[1:].numel()
         log_prior_p1 = -0.5 * (D * math.log(2 * math.pi) + torch.sum(x1**2, dim=tuple(range(1, x1.dim()))))
 
-        # logp(x0) = logp(x1) - integral div v dt
-        log_likelihood = log_prior_p1 + logp_integral  # `+`代表时间上是从T到0的积分（t: T->0）
-
-        # TODO: 实际上如果对应rectified flow是从x0(prior)生成样本x1，
-        # 应该是log_likelihood = log_prior_p1 - logp_integral，但就需要相对应的逆转一下加噪过程
+        # Change of variables: log p0(x0) = log p1(x1) - integral[0,1] div(dx/dt) dt
+        # From ODEFunc: da/dt = +div(v_theta)
+        # Also, d(log p)/dt = -div(dx/dt) = -div(-v_theta) = +div(v_theta) = da/dt
+        # So, a1 = integral[0,1] da/dt dt = integral[0,1] d(log p)/dt dt = log p1(x1) - log p0(x0)
+        # Therefore: log p0(x0) = log p1(x1) - a1
+        log_likelihood = log_prior_p1 - a1  # Final calculation remains the same formula, but a1 is calculated differently
 
         return log_likelihood
 
@@ -293,7 +317,7 @@ class RectifiedFlow(nn.Module):
         assert n == self.seq_length, f'输入序列长度必须为 {self.seq_length}'
 
         # 随机采样时间索引
-        t_indices = torch.randint(0, self.num_timesteps, (b, ), device=device)
+        t_indices = torch.randint(0, self.num_timesteps, (b, ), device=device)  # [bsz]
 
         # 归一化输入
         img = normalize_to_neg_one_to_one(img)

@@ -8,11 +8,11 @@
       - `RectifiedFlow`: Rectified flow for training(path interpolation)/sampling/NLL_cal (section 3.2 + 3.3)
   - [ ] 1.2 train
   - [ ] 1.3 inference
-    - [ ] Euler sampling (1-order)
-    - [ ] Heun sampling (2-order)
-- [ ] 2. NLL_Cal for rectifiedflow
-  - [ ] 2.1 NLL_cal codes
-  - [ ] 2.2 NLL_cal math equations etc. (for paper writing)
+    - [x] Euler sampling (1-order)
+    - [x] Heun sampling (2-order)
+- [x] 2. NLL_Cal for rectifiedflow
+  - [x] 2.1 NLL_cal codes
+  - [x] 2.2 NLL_cal math equations etc. (for paper writing)
 - [ ] 3. Uncertainty 
   - [ ] 3.1 Uncertainty quantify metrics codes
   - [ ] 3.2 Uncertainty calibration codes
@@ -28,3 +28,20 @@
     -- by Gemini 2.5 Pro
 1. add `calculate_log_likelihood` function in `DSTPP/RectifiedFlow.py` with relevant utility functions (but to be verified)
 2. create `app_new.py` supporting `opt.model_type` == `DDPM` or `rf`
+
+## 2025.4.22
+1. update `Appendix.md` with NLL_cal math equations
+2. verify and update `calculate_log_likelihood` function in `DSTPP/RectifiedFlow.py`
+
+## 2025.4.24
+1. summarize the model details of `DSTPP`
+2. support euler sampling and heun sampling in `DSTPP/RectifiedFlow.py` - function `sample`
+3. ! fix the bugs in `RectifiedFlow.py`, including `sample` function and `calculate_log_likelihood` function. update the corresponding math equations (sampling equations & ODEFunc System & ODE Solver) in `Appendix.md`
+
+
+## 2025.4.25
+1. [ ] check and update the model structure (including input -> process -> model -> output) of my `RF-STPP` framework
+
+
+## Other detailed settings
+[ ] realize the `SinusodialPosEmb` in `RF_Diffusion/RF_Diffusion` line 19 `self.time_mlp`

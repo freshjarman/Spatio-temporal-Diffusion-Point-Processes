@@ -13,9 +13,9 @@ class RF_Diffusion(nn.Module):
         super(RF_Diffusion, self).__init__()
         self.channels = 1
         self.self_condition = False  # RF不需要自条件
-        self.condition = condition
+        self.condition = condition  # TRUE表示依据条件处理，cond要分为event_time_non_mask, event_loc_non_mask, enc_out_non_mask
 
-        # 时间编码网络
+        # 时间编码网络; TODO: 这里的时间编码可以考虑使用位置编码，类比 DiffusionModel/ST_Diffusion line 731 + line 700 SinusodialPosEmb
         self.time_mlp = nn.Sequential(nn.Linear(1, num_units), nn.GELU(), nn.Linear(num_units, num_units))
 
         # 处理空间维度的网络
@@ -106,7 +106,7 @@ class RF_Diffusion(nn.Module):
             hidden_dim = int(cond.shape[-1] / 3)
             cond_temporal, cond_spatial, cond_joint = (cond[:, :, :hidden_dim], cond[:, :, hidden_dim:2 * hidden_dim],
                                                        cond[:, :, 2 * hidden_dim:])
-            cond = self.cond_all(cond)
+            cond = self.cond_all(cond)  # [batch_size, 1, num_units]
         else:
             cond = torch.zeros((x.shape[0], 1, self.linears_spatial[0].out_features), device=x.device)
             if self.condition:
@@ -116,11 +116,11 @@ class RF_Diffusion(nn.Module):
         t_embedding = self.time_mlp(t.unsqueeze(-1)).unsqueeze(dim=1)
 
         # 结合条件和时间
-        cond_all = torch.cat((cond, t_embedding), dim=-1)
+        cond_all = torch.cat((cond, t_embedding), dim=-1)  # [batch_size, 1, 2 * num_units]
 
         # 计算注意力权重
-        alpha_s = F.softmax(self.linear_s(cond_all), dim=-1).squeeze(dim=1).unsqueeze(dim=2)
-        alpha_t = F.softmax(self.linear_t(cond_all), dim=-1).squeeze(dim=1).unsqueeze(dim=2)
+        alpha_s = F.softmax(self.linear_s(cond_all), dim=-1).squeeze(dim=1).unsqueeze(dim=2)  # (bsz, 2, 1)
+        alpha_t = F.softmax(self.linear_t(cond_all), dim=-1).squeeze(dim=1).unsqueeze(dim=2)  # (bsz, 2, 1)
 
         # 多层处理
         for idx in range(3):
@@ -153,13 +153,13 @@ class RF_Diffusion(nn.Module):
         x_output = torch.cat((x_temporal, x_spatial), dim=1)  # [B, 2, num_units]
 
         # 应用注意力权重
-        x_output_t = (x_output * alpha_t).sum(dim=1, keepdim=True)
+        x_output_t = (x_output * alpha_t).sum(dim=1, keepdim=True)  # [B, 1, num_units]
         x_output_s = (x_output * alpha_s).sum(dim=1, keepdim=True)
 
         # 输出时空预测值
-        pred_temporal = self.output_temporal(x_output_t)
-        pred_spatial = self.output_spatial(x_output_s)
+        pred_temporal = self.output_temporal(x_output_t)  # [B, 1, 1]
+        pred_spatial = self.output_spatial(x_output_s)  # [B, 1, loc_dim]
 
         # 合并时空维度
         pred = torch.cat((pred_temporal, pred_spatial), dim=-1)
-        return pred  # [B, 1, 1+dim]
+        return pred  # [B, 1, dim], dim=loc_dim + t_dim (e.g. 2 + 1)
