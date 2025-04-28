@@ -7,7 +7,8 @@ import torch.nn.functional as F
 from tqdm.auto import tqdm
 import numpy as np
 from torchdiffeq import odeint
-from zmq import device
+
+# from zmq import device
 
 
 # 还是说归一化到[-1, 1]是为了保证数据和噪声的均值和尺度更加匹配？从而在线性插值过程中均值始终为0，从而降低v的学习难度？
@@ -399,7 +400,7 @@ class RectifiedFlow(nn.Module):
 
 
 if __name__ == '__main__':
-    # TODO: 测试代码
+    """
     # 假设你已经定义了一个模型实例 model 和数据 img 和 cond
     from RF_Diffusion import RF_Diffusion
     from RF_Model_all import RF_Model_all
@@ -444,3 +445,4 @@ if __name__ == '__main__':
     # 测试采样
     # sampled_data = rf_instance.sample(batch_size=16)
     # print(f'Sampled Data: {sampled_data.shape}')  # 输出采样数据的形状
+"""

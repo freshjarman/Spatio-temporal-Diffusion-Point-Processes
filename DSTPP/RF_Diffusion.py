@@ -1,6 +1,23 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
+
+
+class SinusoidalPosEmb(nn.Module):
+
+    def __init__(self, dim):
+        super().__init__()
+        self.dim = dim
+
+    def forward(self, x):  # eq(5)
+        device = x.device
+        half_dim = self.dim // 2
+        emb = math.log(10000) / (half_dim - 1)
+        emb = torch.exp(torch.arange(half_dim, device=device) * -emb)
+        emb = x[:, None] * emb[None, :]
+        emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
+        return emb  # (..., d_model)
 
 
 class RF_Diffusion(nn.Module):
@@ -16,7 +33,11 @@ class RF_Diffusion(nn.Module):
         self.condition = condition  # TRUE表示依据条件处理，cond要分为event_time_non_mask, event_loc_non_mask, enc_out_non_mask
 
         # 时间编码网络; TODO: 这里的时间编码可以考虑使用位置编码，类比 DiffusionModel/ST_Diffusion line 731 + line 700 SinusodialPosEmb
-        self.time_mlp = nn.Sequential(nn.Linear(1, num_units), nn.GELU(), nn.Linear(num_units, num_units))
+        sinu_pos_emb = SinusoidalPosEmb(num_units)
+        fourier_dim = num_units
+        time_dim = num_units
+        self.time_mlp = nn.Sequential(sinu_pos_emb, nn.Linear(fourier_dim, time_dim), nn.GELU(),
+                                      nn.Linear(time_dim, time_dim))
 
         # 处理空间维度的网络
         self.linears_spatial = nn.ModuleList([
@@ -80,7 +101,7 @@ class RF_Diffusion(nn.Module):
             cond = torch.zeros_like(x_spatial)
 
         # 时间嵌入
-        t_embedding = self.time_mlp(t.unsqueeze(-1)).unsqueeze(dim=1)
+        t_embedding = self.time_mlp(t).unsqueeze(dim=1)
 
         # 结合条件和时间信息
         cond_all = torch.cat((cond, t_embedding), dim=-1)
@@ -113,7 +134,7 @@ class RF_Diffusion(nn.Module):
                 cond_temporal = cond_spatial = cond_joint = cond
 
         # 时间编码
-        t_embedding = self.time_mlp(t.unsqueeze(-1)).unsqueeze(dim=1)
+        t_embedding = self.time_mlp(t).unsqueeze(dim=1)
 
         # 结合条件和时间
         cond_all = torch.cat((cond, t_embedding), dim=-1)  # [batch_size, 1, 2 * num_units]

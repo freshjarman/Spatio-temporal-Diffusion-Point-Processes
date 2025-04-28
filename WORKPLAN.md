@@ -6,14 +6,14 @@
     - Spatio-temporal decoder
       - `RF_Diffusion`: Co-attention neural network for modeling $v_\theta$ (section 3.4)
       - `RectifiedFlow`: Rectified flow for training(path interpolation)/sampling/NLL_cal (section 3.2 + 3.3)
-  - [ ] 1.2 train
-  - [ ] 1.3 inference
+  - [x] 1.2 train
+  - [x] 1.3 inference
     - [x] Euler sampling (1-order)
     - [x] Heun sampling (2-order)
 - [x] 2. NLL_Cal for rectifiedflow
   - [x] 2.1 NLL_cal codes
   - [x] 2.2 NLL_cal math equations etc. (for paper writing)
-- [ ] 3. Uncertainty 
+- [ ] 3. Uncertainty (refer to Paper `SMURF-THP` & `SMASH`)
   - [ ] 3.1 Uncertainty quantify metrics codes
   - [ ] 3.2 Uncertainty calibration codes
 
@@ -48,6 +48,11 @@
    2. Fix bugs in `ODEFunc` and `divergence_approx` about velocity prediction of nn model
    3. Update relevent utilization codes in `app_new.py`
 2. Delete NLL Calculation codes during training stage in `app_new.py`, which i think is unnecessary
+3. Realize the `SinusodialPosEmb` in `RF_Diffusion/RF_Diffusion` - `self.time_mlp`
+4. Debug the whole `RF-STPP` process on earthquake dataset with epoch=200 & sampling-steps=20
 
 ## Other detailed settings
-[ ] realize the `SinusodialPosEmb` in `RF_Diffusion/RF_Diffusion` line 19 `self.time_mlp`
+[x] realize the `SinusodialPosEmb` in `RF_Diffusion/RF_Diffusion` - `self.time_mlp`
+
+## Hyperparams setting
+1. sampling-steps (affect metrics: temporal-rmse & spatial-distance, further affect uncertainty metrics)

@@ -59,6 +59,7 @@ def get_args():
                         ],
                         help='')
     parser.add_argument('--batch_size', type=int, default=64, help='')
+    parser.add_argument('--lr', type=float, default=1e-4, help='学习率')
     parser.add_argument('--timesteps', type=int, default=500, help='')
     parser.add_argument('--samplingsteps', type=int, default=500, help='')
     parser.add_argument('--objective', type=str, default='pred_noise', help='')
@@ -236,7 +237,7 @@ if __name__ == "__main__":
 
     # START Training!
 
-    optimizer = AdamW(Model.parameters(), lr=1e-3, betas=(0.9, 0.99))
+    optimizer = AdamW(Model.parameters(), lr=opt.lr, betas=(0.9, 0.99))
     step, early_stop = 0, 0
     min_loss_test = 1e20
     for itr in range(opt.total_epochs):
@@ -343,16 +344,24 @@ if __name__ == "__main__":
                 # writer.add_scalar(tag='Evaluation/distance_spatial_mean_val',scalar_value=mae_spatial_mean/total_num,global_step=itr)
 
                 ### TEST
+                # 计算TEST阶段的耗时
+                start_time = time.time()
                 loss_test_all, vb_test_all, vb_test_temporal_all, vb_test_spatial_all = 0.0, 0.0, 0.0, 0.0
                 mae_temporal, rmse_temporal, mae_spatial, mae_lng, mae_lat, total_num = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-                print('TEST!')
+                print('TEST!')  # TODO: 为什么VAL和TEST持续的时间很长很耗时？NLL计算占据了几乎全部的耗时（182s/187s）
                 for batch in testloader:
                     event_time_non_mask, event_loc_non_mask, enc_out_non_mask = Batch2toModel(batch, Model.transformer)
+                    encode_end_time = time.time()
+                    print('TEST_编码耗时：', encode_end_time - start_time)
 
                     sampled_seq = Model.diffusion.sample(batch_size=event_time_non_mask.shape[0], cond=enc_out_non_mask)
+                    end_time = time.time()
+                    print('TEST_采样耗时：', end_time - encode_end_time)
 
                     loss = Model.diffusion(torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1),
                                            enc_out_non_mask)
+                    loss_end_time = time.time()
+                    print('TEST_loss计算耗时：', loss_end_time - end_time)
 
                     if opt.model_type == 'ddpm':
                         # Variational lower bound to approximate the NLL of the data
@@ -361,6 +370,10 @@ if __name__ == "__main__":
                     else:  # opt.model_type == 'rf'
                         vb, vb_temporal, vb_spatial = Model.diffusion.calculate_neg_log_likelihood(
                             torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
+
+                    nll_end_time = time.time()
+                    print('TEST_NLL计算耗时：', nll_end_time - loss_end_time)
+                    print('TEST_总耗时：', nll_end_time - start_time)
 
                     vb_test_all += vb
                     vb_test_temporal_all += vb_temporal
@@ -414,14 +427,16 @@ if __name__ == "__main__":
                                   global_step=itr)
                 # writer.add_scalar(tag='Evaluation/distance_spatial_mean_test',scalar_value=mae_spatial_mean/total_num,global_step=itr)
 
+        # lr_init = 1e-3  # TODO: initial learning rate
+        lr_init = opt.lr
         if itr < warmup_steps:
             for param_group in optimizer.param_groups:
-                lr = LR_warmup(1e-3, warmup_steps, itr)
+                lr = LR_warmup(lr_init, warmup_steps, itr)
                 param_group["lr"] = lr
 
         else:
             for param_group in optimizer.param_groups:
-                lr = 1e-3 - (1e-3 - 5e-5) * (itr - warmup_steps) / opt.total_epochs
+                lr = lr_init - (lr_init - 5e-5) * (itr - warmup_steps) / opt.total_epochs
                 param_group["lr"] = lr
 
         writer.add_scalar(tag='Statistics/lr', scalar_value=lr, global_step=itr)
