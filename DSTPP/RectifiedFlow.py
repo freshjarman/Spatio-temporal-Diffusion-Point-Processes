@@ -28,7 +28,7 @@ def default(val, d):
 
 
 # --- 1. Hutchinson Trace Estimator for Divergence ---
-def divergence_approx(f, x, t, e=None, self_cond=None, cond=None):
+def divergence_approx(f, x, t, mask, e=None, self_cond=None, cond=None):
     # 计算 v(x, t) 关于 x 的散度的随机近似 $\nabla \cdot v = \text{Tr}(\nabla v) = \mathbb{E}_{\epsilon}[\epsilon^T (\nabla v) \epsilon] $
     """
 
@@ -36,6 +36,7 @@ def divergence_approx(f, x, t, e=None, self_cond=None, cond=None):
         f: 可调用函数，表示速度场 v(x, t, self_cond, cond)
         x: 评估点
         t: 时间点
+        mask: 用于选择有效的样本, 形同 x 的 bool (0、1) 张量，只在被激活维度保留随机噪声
         e: 随机向量，如果为None则随机生成
         self_cond: 自条件项，默认None
         cond: 条件信息，默认None
@@ -44,7 +45,7 @@ def divergence_approx(f, x, t, e=None, self_cond=None, cond=None):
     """
     if e is None:
         e = torch.randn_like(x)
-
+    e = e * mask  # 仅在被激活的维度上保留随机噪声
     x_requires_grad = x.requires_grad
     with torch.enable_grad():
         x.requires_grad_(True)
@@ -65,14 +66,23 @@ class ODEFunc(nn.Module):
     da/dt = +div_x v_theta(x, t) (Because d(log p)/dt = -div(f) = -div(-v_theta) = +div(v_theta))
     """
 
-    def __init__(self, model_v, cond=None):
+    def __init__(self, model_v, seq_length, cond=None):
         super().__init__()
         self.model_v = model_v  # model_v learns v_theta approx x0 - x1
         self.cond = cond  # 存储条件信息
+        self.seq_length = seq_length  # loc's dim + 1
+
+        # construct 2 mask
+        mask_time = torch.zeros(1, 1, seq_length)
+        mask_space = torch.ones(1, 1, seq_length)
+        mask_time[:, :, 0] = 1.  # t
+        mask_space[:, :, 0] = 0.  # loc
+        self.register_buffer('mask_t', mask_time)
+        self.register_buffer('mask_s', mask_space)
 
     def forward(self, t, state):
         # state 是一个元组 (x, logp_integral_accumulator)
-        x, _ = state
+        x, a_all, a_t, a_s = state
         batch_size = x.shape[0]
 
         if t.numel() == 1:
@@ -86,13 +96,17 @@ class ODEFunc(nn.Module):
         # Calculate divergence of v_theta using Hutchinson estimator
         e = torch.randn_like(x)
         # divergence_approx returns approximation of div(v_theta)
-        div_v_theta = divergence_approx(self.model_v, x, t_batch, e, None, self.cond)
+        div_v_theta = divergence_approx(self.model_v, x, t_batch, torch.ones_like(x).to(e), e, None, self.cond)
+        div_t = divergence_approx(self.model_v, x, t_batch, self.mask_t.expand_as(x).to(e), e, None, self.cond)
+        div_s = divergence_approx(self.model_v, x, t_batch, self.mask_s.expand_as(x).to(e), e, None, self.cond)
 
         # Dynamics:
         dxdt = -v_theta  # Forward ODE velocity field f = -v_theta
         dadt = div_v_theta  # Corrected: da/dt = +div(v_theta)
+        da_t = div_t
+        da_s = div_s
 
-        return (dxdt, dadt)  # 返回耦合 ODE 系统的右式（即如上的两个ODE的右式）
+        return (dxdt, dadt, da_t, da_s)  # 返回耦合 ODE 系统的右式（即如上的两个ODE的右式）
 
 
 class RectifiedFlow(nn.Module):
@@ -300,18 +314,21 @@ class RectifiedFlow(nn.Module):
         # ODEFunc now correctly defines the forward dynamics dx/dt = -v_theta
         # and the log-density accumulator da/dt = +div(v_theta)
         # logp1(x1) = logp0(x0) + integral[0,1] da/dt dt
-        ode_func = ODEFunc(self.model, cond)
+        ode_func = ODEFunc(self.model, self.seq_length, cond)
 
         x0_norm = normalize_to_neg_one_to_one(x_start)  # Start at real data x0 (t=0)
         a0 = torch.zeros(x0_norm.shape[0], device=x0_norm.device)  # Initial logp accumulator
-        initial_state = (x0_norm, a0)
-
+        a0_t = torch.zeros(x0_norm.shape[0], device=x0_norm.device)
+        a0_s = torch.zeros(x0_norm.shape[0], device=x0_norm.device)
+        initial_state = (x0_norm, a0, a0_t, a0_s)  # # (x , a , a_t , a_s)
         t_span = torch.tensor([0.0, 1.0], device=x0_norm.device)  # Integrate forward t=0 to t=1
 
         final_state_tuple = odeint(ode_func, initial_state, t_span, rtol=rtol, atol=atol, method=method)
+        # [bsz, 1, dim], [bsz], [bsz], [bsz]
+        x1, a1, a1_t, a1_s = [final_state_tuple[i][-1] for i in range(4)]
 
-        x1 = final_state_tuple[0][-1]  # [bsz, 1, dim], State at t=1 (should approx noise)
-        a1 = final_state_tuple[1][-1]  # [bsz], Accumulated logp change a1 = integral[0,1] da/dt dt
+        # x1 = final_state_tuple[0][-1]  # [bsz, 1, dim], State at t=1 (should approx noise)
+        # a1 = final_state_tuple[1][-1]  # [bsz], Accumulated logp change a1 = integral[0,1] da/dt dt
 
         # Calculate log prior probability of the state at t=1
         D = x1.shape[1:].numel()
@@ -321,65 +338,20 @@ class RectifiedFlow(nn.Module):
         # Also, d(log p)/dt = -div(dx/dt) = -div(-v_theta) = +div(v_theta) = da/dt
         # So, a1 = integral[0,1] da/dt dt = integral[0,1] d(log p)/dt dt = log p1(x1) - log p0(x0)
         # Therefore: log p0(x0) = log p1(x1) - a1
-        log_likelihood = log_prior_p1 - a1  # [bsz]
 
-        # 计算单独的时间和空间对数似然
-        # 1. 单独评估时间和空间维度的散度贡献
-        # 创建一个仅在时间维度上有梯度的掩码函数
-        def temporal_model(x, t, self_cond, cond):
-            # 获取完整预测
-            full_pred = self.model(x, t, self_cond, cond)
-            # 只保留时间维度的预测 (第一个维度)
-            time_pred = torch.zeros_like(full_pred)
-            time_pred[:, :, 0:1] = full_pred[:, :, 0:1]
-            return time_pred
+        # 时间 / 空间先验
+        log_p1_t = -0.5 * (math.log(2 * math.pi) + (x1[:, :, 0:1]**2).sum(dim=tuple(range(1, x1.dim()))))
+        log_p1_s = -0.5 * ((D - 1) * math.log(2 * math.pi) + (x1[:, :, 1:]**2).sum(dim=tuple(range(1, x1.dim()))))
 
-        # 创建一个仅在空间维度上有梯度的掩码函数
-        def spatial_model(x, t, self_cond, cond):
-            # 获取完整预测
-            full_pred = self.model(x, t, self_cond, cond)
-            # 只保留空间维度的预测 (除第一维外)
-            space_pred = torch.zeros_like(full_pred)
-            space_pred[:, :, 1:] = full_pred[:, :, 1:]
-            return space_pred
+        log_p0 = log_prior_p1 - a1  # [bsz]
+        log_p0_t = log_p1_t - a1_t  # [bsz]
+        log_p0_s = log_p1_s - a1_s  # [bsz]
 
-        # 计算最终状态x1处的散度
-        t_final = torch.ones(x1.shape[0], device=x1.device)
+        nll = -log_p0.sum().item()
+        nll_temp = -log_p0_t.sum().item()
+        nll_spat = -log_p0_s.sum().item()
 
-        # 估计时间和空间维度的散度比例
-        div_temporal = divergence_approx(temporal_model, x1, t_final, None, None, cond)
-        div_spatial = divergence_approx(spatial_model, x1, t_final, None, None, cond)
-
-        # 计算散度的相对比例
-        div_total = div_temporal.abs() + div_spatial.abs() + 1e-8  # 防止除零
-        temporal_ratio = div_temporal.abs() / div_total
-        spatial_ratio = div_spatial.abs() / div_total
-
-        # 按散度比例分配 a1
-        a1_temporal = a1 * temporal_ratio
-        a1_spatial = a1 * spatial_ratio
-
-        # 计算先验概率的时间和空间分量
-        x1_temporal = x1[:, :, 0:1]
-        D_temporal = x1_temporal.shape[1:].numel()
-        log_prior_p1_temporal = -0.5 * (D_temporal * math.log(2 * math.pi) +
-                                        torch.sum(x1_temporal**2, dim=tuple(range(1, x1_temporal.dim()))))
-
-        x1_spatial = x1[:, :, 1:]
-        D_spatial = x1_spatial.shape[1:].numel()
-        log_prior_p1_spatial = -0.5 * (D_spatial * math.log(2 * math.pi) +
-                                       torch.sum(x1_spatial**2, dim=tuple(range(1, x1_spatial.dim()))))
-
-        # 计算子空间的对数似然
-        log_likelihood_temporal = log_prior_p1_temporal - a1_temporal
-        log_likelihood_spatial = log_prior_p1_spatial - a1_spatial
-
-        # 转换为负对数似然 (NLL)，并使用 .sum().item() 匹配 DDPM 的接口
-        nll = -log_likelihood.sum().item()
-        nll_temporal = -log_likelihood_temporal.sum().item()
-        nll_spatial = -log_likelihood_spatial.sum().item()
-
-        return nll, nll_temporal, nll_spatial
+        return nll, nll_temp, nll_spat
 
     def forward(self, img, cond):
         """

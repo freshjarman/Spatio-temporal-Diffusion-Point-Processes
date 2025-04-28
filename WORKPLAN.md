@@ -51,8 +51,14 @@
 3. Realize the `SinusodialPosEmb` in `RF_Diffusion/RF_Diffusion` - `self.time_mlp`
 4. Debug the whole `RF-STPP` process on earthquake dataset with epoch=200 & sampling-steps=20
 
+## 2025.4.28
+1. batched experiments on SEU Platform
+2. [x] fix the `divergence_approx` (with mask)/`ODEFunc`/`calculate_neg_log_likelihood` for precise `nll, nll_temp, nll_spat`
+
 ## Other detailed settings
 [x] realize the `SinusodialPosEmb` in `RF_Diffusion/RF_Diffusion` - `self.time_mlp`
+[ ] complete abstract + introduction + method_summary in one page
+[ ] update uncertainty quantify/calibration module
 
 ## Hyperparams setting
 1. sampling-steps (affect metrics: temporal-rmse & spatial-distance, further affect uncertainty metrics)
