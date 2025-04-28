@@ -59,6 +59,7 @@ def get_args():
                         ],
                         help='')
     parser.add_argument('--batch_size', type=int, default=64, help='')
+    parser.add_argument('--lr', type=float, default=1e-4, help='学习率')
     parser.add_argument('--timesteps', type=int, default=500, help='')
     parser.add_argument('--samplingsteps', type=int, default=500, help='')
     parser.add_argument('--objective', type=str, default='pred_noise', help='')
@@ -111,7 +112,7 @@ def data_loader(writer):
             Min.append(0)
 
     assert Min[1] > 0
-    # normalzie d_time and location (vector)
+    # ! normalzie d_time and location (vector)
     train_data = [[[normalization(i[j], Max[j], Min[j]) for j in range(len(i))] for i in u] for u in train_data]
     test_data = [[[normalization(i[j], Max[j], Min[j]) for j in range(len(i))] for i in u] for u in test_data]
     val_data = [[[normalization(i[j], Max[j], Min[j]) for j in range(len(i))] for i in u] for u in val_data]
@@ -139,7 +140,7 @@ def Batch2toModel(batch, transformer):
 
         event_loc = torch.cat((lng.unsqueeze(dim=2), lat.unsqueeze(dim=2), height.unsqueeze(dim=2)), dim=-1)
 
-    event_time = event_time.to(device)
+    event_time = event_time.to(device)  # normalized d_time ∈ [0, 1]
     event_time_origin = event_time_origin.to(device)
     event_loc = event_loc.to(device)
 
@@ -152,12 +153,12 @@ def Batch2toModel(batch, transformer):
         length = int(sum(mask[index]).item())
         if length > 1:
             enc_out_non_mask += [i.unsqueeze(dim=0) for i in enc_out[index][:length - 1]]  # condition, drop last one
-            event_time_non_mask += [i.unsqueeze(dim=0) for i in event_time[index][1:length]]  # event time
+            event_time_non_mask += [i.unsqueeze(dim=0) for i in event_time[index][1:length]]  # event time, drop first 1
             event_loc_non_mask += [i.unsqueeze(dim=0) for i in event_loc[index][1:length]]  # event loc
 
     enc_out_non_mask = torch.cat(enc_out_non_mask, dim=0)  # (batch_all_condition_events, 3 * d_model)
-    event_time_non_mask = torch.cat(event_time_non_mask, dim=0)
-    event_loc_non_mask = torch.cat(event_loc_non_mask, dim=0)
+    event_time_non_mask = torch.cat(event_time_non_mask, dim=0)  # (batch_all_condition_events, )
+    event_loc_non_mask = torch.cat(event_loc_non_mask, dim=0)  # (batch_all_condition_events, opt.dim)
 
     event_time_non_mask = event_time_non_mask.reshape(-1, 1, 1)  # (batch_all_condition_events, 1, 1)
     event_loc_non_mask = event_loc_non_mask.reshape(-1, 1, opt.dim)  # (batch_all_condition_events, 1, opt.dim)
@@ -193,16 +194,7 @@ if __name__ == "__main__":
 
     writer = SummaryWriter(log_dir=logdir, flush_secs=5)
 
-    model = ST_Diffusion(n_steps=opt.timesteps, dim=1 + opt.dim, condition=True, cond_dim=64).to(device)
-
-    diffusion = GaussianDiffusion_ST(model,
-                                     loss_type=opt.loss_type,
-                                     seq_length=1 + opt.dim,
-                                     timesteps=opt.timesteps,
-                                     sampling_timesteps=opt.samplingsteps,
-                                     objective=opt.objective,
-                                     beta_schedule=opt.beta_schedule).to(device)
-
+    # Spatio-temporal Encoder
     transformer = Transformer_ST(d_model=64,
                                  d_rnn=256,
                                  d_inner=128,
@@ -215,14 +207,37 @@ if __name__ == "__main__":
                                  loc_dim=opt.dim,
                                  CosSin=True).to(device)
 
-    Model = Model_all(transformer, diffusion)
+    if opt.model_type == 'ddpm':
+        # 原有DDPM模型创建代码
+        model = ST_Diffusion(n_steps=opt.timesteps, dim=1 + opt.dim, condition=True, cond_dim=64).to(device)
+        diffusion = GaussianDiffusion_ST(model,
+                                         loss_type=opt.loss_type,
+                                         seq_length=1 + opt.dim,
+                                         timesteps=opt.timesteps,
+                                         sampling_timesteps=opt.samplingsteps,
+                                         objective=opt.objective,
+                                         beta_schedule=opt.beta_schedule).to(device)
+        Model = Model_all(transformer, diffusion)
+    else:  # opt.model_type == 'rf'
+        # 新的Rectified Flow模型创建代码
+        model = RF_Diffusion(n_steps=opt.timesteps, dim=1 + opt.dim, condition=True, cond_dim=64).to(device)
+        rf = RectifiedFlow(model,
+                           loss_type=opt.loss_type,
+                           seq_length=1 + opt.dim,
+                           timesteps=opt.timesteps,
+                           sampling_timesteps=opt.samplingsteps).to(device)
+        Model = RF_Model_all(transformer, rf)
+
+    print("Model created successfully!")
 
     trainloader, testloader, valloader, (MAX, MIN) = data_loader(writer)
+    print("Data loaded successfully!")
 
     warmup_steps = 5
 
-    # training
-    optimizer = AdamW(Model.parameters(), lr=1e-3, betas=(0.9, 0.99))
+    # START Training!
+
+    optimizer = AdamW(Model.parameters(), lr=opt.lr, betas=(0.9, 0.99))
     step, early_stop = 0, 0
     min_loss_test = 1e20
     for itr in range(opt.total_epochs):
@@ -241,7 +256,8 @@ if __name__ == "__main__":
                 for batch in valloader:
                     event_time_non_mask, event_loc_non_mask, enc_out_non_mask = Batch2toModel(batch, Model.transformer)
 
-                    sampled_seq = Model.diffusion.sample(batch_size=event_time_non_mask.shape[0], cond=enc_out_non_mask)
+                    sampled_seq = Model.diffusion.sample(batch_size=event_time_non_mask.shape[0],
+                                                         cond=enc_out_non_mask)  # [bsz, 1, dim]
 
                     # sampled_seq_temporal_all, sampled_seq_spatial_all = [], []
                     # for _ in range(100):  # 准备基于多次采样计算统计指标（如平均RMSE、置信区间等）
@@ -255,9 +271,14 @@ if __name__ == "__main__":
 
                     loss = Model.diffusion(torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1),
                                            enc_out_non_mask)
-                    # Variational lower bound to approximate the NLL of the data
-                    vb, vb_temporal, vb_spatial = Model.diffusion.NLL_cal(
-                        torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
+
+                    if opt.model_type == 'ddpm':
+                        # Variational lower bound to approximate the NLL of the data
+                        vb, vb_temporal, vb_spatial = Model.diffusion.NLL_cal(
+                            torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
+                    else:  # opt.model_type == 'rf'
+                        vb, vb_temporal, vb_spatial = Model.diffusion.calculate_neg_log_likelihood(
+                            torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
 
                     vb_test_all += vb
                     vb_test_temporal_all += vb_temporal
@@ -323,19 +344,36 @@ if __name__ == "__main__":
                 # writer.add_scalar(tag='Evaluation/distance_spatial_mean_val',scalar_value=mae_spatial_mean/total_num,global_step=itr)
 
                 ### TEST
+                # 计算TEST阶段的耗时
+                start_time = time.time()
                 loss_test_all, vb_test_all, vb_test_temporal_all, vb_test_spatial_all = 0.0, 0.0, 0.0, 0.0
                 mae_temporal, rmse_temporal, mae_spatial, mae_lng, mae_lat, total_num = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-                print('TEST!')
+                print('TEST!')  # TODO: 为什么VAL和TEST持续的时间很长很耗时？NLL计算占据了几乎全部的耗时（182s/187s）
                 for batch in testloader:
                     event_time_non_mask, event_loc_non_mask, enc_out_non_mask = Batch2toModel(batch, Model.transformer)
+                    encode_end_time = time.time()
+                    print('TEST_编码耗时：', encode_end_time - start_time)
 
                     sampled_seq = Model.diffusion.sample(batch_size=event_time_non_mask.shape[0], cond=enc_out_non_mask)
+                    end_time = time.time()
+                    print('TEST_采样耗时：', end_time - encode_end_time)
 
                     loss = Model.diffusion(torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1),
                                            enc_out_non_mask)
+                    loss_end_time = time.time()
+                    print('TEST_loss计算耗时：', loss_end_time - end_time)
 
-                    vb, vb_temporal, vb_spatial = Model.diffusion.NLL_cal(
-                        torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
+                    if opt.model_type == 'ddpm':
+                        # Variational lower bound to approximate the NLL of the data
+                        vb, vb_temporal, vb_spatial = Model.diffusion.NLL_cal(
+                            torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
+                    else:  # opt.model_type == 'rf'
+                        vb, vb_temporal, vb_spatial = Model.diffusion.calculate_neg_log_likelihood(
+                            torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
+
+                    nll_end_time = time.time()
+                    print('TEST_NLL计算耗时：', nll_end_time - loss_end_time)
+                    print('TEST_总耗时：', nll_end_time - start_time)
 
                     vb_test_all += vb
                     vb_test_temporal_all += vb_temporal
@@ -389,14 +427,16 @@ if __name__ == "__main__":
                                   global_step=itr)
                 # writer.add_scalar(tag='Evaluation/distance_spatial_mean_test',scalar_value=mae_spatial_mean/total_num,global_step=itr)
 
+        # lr_init = 1e-3  # TODO: initial learning rate
+        lr_init = opt.lr
         if itr < warmup_steps:
             for param_group in optimizer.param_groups:
-                lr = LR_warmup(1e-3, warmup_steps, itr)
+                lr = LR_warmup(lr_init, warmup_steps, itr)
                 param_group["lr"] = lr
 
         else:
             for param_group in optimizer.param_groups:
-                lr = 1e-3 - (1e-3 - 5e-5) * (itr - warmup_steps) / opt.total_epochs
+                lr = lr_init - (lr_init - 5e-5) * (itr - warmup_steps) / opt.total_epochs
                 param_group["lr"] = lr
 
         writer.add_scalar(tag='Statistics/lr', scalar_value=lr, global_step=itr)
@@ -412,13 +452,17 @@ if __name__ == "__main__":
             optimizer.zero_grad()
             loss.backward()
             loss_all += loss.item() * event_time_non_mask.shape[0]
-            # Variational lower bound to approximate the NLL of the data
-            vb, vb_temporal, vb_spatial = Model.diffusion.NLL_cal(
-                torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
 
-            vb_all += vb
-            vb_temporal_all += vb_temporal
-            vb_spatial_all += vb_spatial
+            # if opt.model_type == 'ddpm':
+            #     # Variational lower bound to approximate the NLL of the data
+            #     vb, vb_temporal, vb_spatial = Model.diffusion.NLL_cal(
+            #         torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
+            # else:  # opt.model_type == 'rf'
+            #     vb, vb_temporal, vb_spatial = Model.diffusion.calculate_neg_log_likelihood(
+            #         torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
+            # vb_all += vb
+            # vb_temporal_all += vb_temporal
+            # vb_spatial_all += vb_spatial
 
             writer.add_scalar(tag='Training/loss_step', scalar_value=loss.item(), global_step=step)
 
@@ -434,6 +478,7 @@ if __name__ == "__main__":
 
         writer.add_scalar(tag='Training/loss_epoch', scalar_value=loss_all / total_num, global_step=itr)
 
-        writer.add_scalar(tag='Training/NLL_epoch', scalar_value=vb_all / total_num, global_step=itr)
-        writer.add_scalar(tag='Training/NLL_temporal_epoch', scalar_value=vb_temporal_all / total_num, global_step=itr)
-        writer.add_scalar(tag='Training/NLL_spatial_epoch', scalar_value=vb_spatial_all / total_num, global_step=itr)
+        # FIXME: 每个epoch（尤其是训练阶段）没有必要计算NLL吧？有什么用呢？
+        # writer.add_scalar(tag='Training/NLL_epoch', scalar_value=vb_all / total_num, global_step=itr)
+        # writer.add_scalar(tag='Training/NLL_temporal_epoch', scalar_value=vb_temporal_all / total_num, global_step=itr)
+        # writer.add_scalar(tag='Training/NLL_spatial_epoch', scalar_value=vb_spatial_all / total_num, global_step=itr)
