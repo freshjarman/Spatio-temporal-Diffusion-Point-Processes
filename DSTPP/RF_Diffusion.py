@@ -32,7 +32,7 @@ class RF_Diffusion(nn.Module):
         self.self_condition = False  # RF不需要自条件
         self.condition = condition  # TRUE表示依据条件处理，cond要分为event_time_non_mask, event_loc_non_mask, enc_out_non_mask
 
-        # 时间编码网络; TODO: 这里的时间编码可以考虑使用位置编码，类比 DiffusionModel/ST_Diffusion line 731 + line 700 SinusodialPosEmb
+        # 时间编码网络; 这里的时间编码可以考虑使用位置编码，类比 DiffusionModel/ST_Diffusion line 731 + line 700 SinusodialPosEmb （但尚未论证有明显优势）
         sinu_pos_emb = SinusoidalPosEmb(num_units)
         fourier_dim = num_units
         time_dim = num_units

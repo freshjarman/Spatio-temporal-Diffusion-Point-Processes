@@ -62,3 +62,4 @@
 
 ## Hyperparams setting
 1. sampling-steps (affect metrics: temporal-rmse & spatial-distance, further affect uncertainty metrics)
+[ ] epoch = 100后考虑lr * 0.1，因为他这个NLL_Spatial就直接转折上去了

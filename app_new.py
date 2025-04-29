@@ -256,6 +256,7 @@ if __name__ == "__main__":
                 for batch in valloader:
                     event_time_non_mask, event_loc_non_mask, enc_out_non_mask = Batch2toModel(batch, Model.transformer)
 
+                    # TODO: 这里只采样了一个，但显然多采样几次，然后集成更好（1. 期待更低的误差和方差 2. 假如方差和误差高度相关，那么就可以说盲预测的时候低方差也代表了我的预测就更准更可靠！）
                     sampled_seq = Model.diffusion.sample(batch_size=event_time_non_mask.shape[0],
                                                          cond=enc_out_non_mask)  # [bsz, 1, dim]
 
@@ -348,7 +349,7 @@ if __name__ == "__main__":
                 start_time = time.time()
                 loss_test_all, vb_test_all, vb_test_temporal_all, vb_test_spatial_all = 0.0, 0.0, 0.0, 0.0
                 mae_temporal, rmse_temporal, mae_spatial, mae_lng, mae_lat, total_num = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-                print('TEST!')  # TODO: 为什么VAL和TEST持续的时间很长很耗时？NLL计算占据了几乎全部的耗时（182s/187s）
+                print('TEST!')  # 为什么VAL和TEST持续的时间很长很耗时？NLL计算占据了几乎全部的耗时（182s/187s）
                 for batch in testloader:
                     event_time_non_mask, event_loc_non_mask, enc_out_non_mask = Batch2toModel(batch, Model.transformer)
                     encode_end_time = time.time()
@@ -433,11 +434,19 @@ if __name__ == "__main__":
             for param_group in optimizer.param_groups:
                 lr = LR_warmup(lr_init, warmup_steps, itr)
                 param_group["lr"] = lr
-
-        else:
+        elif itr == 100:  # 线性衰减
             for param_group in optimizer.param_groups:
-                lr = lr_init - (lr_init - 5e-5) * (itr - warmup_steps) / opt.total_epochs
+                lr = lr_init * 0.1
                 param_group["lr"] = lr
+        elif itr == 200:  # 线性衰减
+            for param_group in optimizer.param_groups:
+                lr = lr_init * 0.01
+                param_group["lr"] = lr
+
+        # else:
+        #     for param_group in optimizer.param_groups:
+        #         lr = lr_init - (lr_init - 5e-5) * (itr - warmup_steps) / opt.total_epochs
+        #         param_group["lr"] = lr
 
         writer.add_scalar(tag='Statistics/lr', scalar_value=lr, global_step=itr)
         ### TRAIN

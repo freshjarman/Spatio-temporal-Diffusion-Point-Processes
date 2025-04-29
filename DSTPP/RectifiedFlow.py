@@ -264,7 +264,7 @@ class RectifiedFlow(nn.Module):
 
         # 归一化到[0,1]
         x = unnormalize_to_zero_to_one(x)
-        return x
+        return x  # [bsz, 1, dim] (1 + loc_dim)
 
     # NOT USED!
     def NLL_cal(self, x_start, cond):
