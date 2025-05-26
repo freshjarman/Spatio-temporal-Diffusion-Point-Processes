@@ -55,6 +55,10 @@
 1. batched experiments on SEU Platform
 2. [x] fix the `divergence_approx` (with mask)/`ODEFunc`/`calculate_neg_log_likelihood` for precise `nll, nll_temp, nll_spat`
 
+## 2025.5.26
+1. update ensemble + uncertainty quantify/calibration module
+2. [ ] modify crime dataset to support `RF-STPP` framework, i.e. the each `data[2]` is event mark, which is not supported by `RF-STPP` framework now
+
 ## Other detailed settings
 [x] realize the `SinusodialPosEmb` in `RF_Diffusion/RF_Diffusion` - `self.time_mlp`
 [ ] complete abstract + introduction + method_summary in one page
