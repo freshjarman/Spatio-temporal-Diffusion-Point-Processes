@@ -50,14 +50,12 @@ def get_args():
     parser.add_argument('--loss_type', type=str, default='l2', choices=['l1', 'l2', 'Euclid'], help='')
     parser.add_argument('--beta_schedule', type=str, default='cosine', choices=['linear', 'cosine'], help='')
     parser.add_argument('--dim', type=int, default=2, help='', choices=[1, 2, 3])
-    parser.add_argument('--dataset',
-                        type=str,
-                        default='Earthquake',
-                        choices=[
-                            'Citibike', 'Earthquake', 'HawkesGMM', 'Pinwheel', 'COVID19', 'Mobility', 'HawkesGMM_2d',
-                            'Independent'
-                        ],
-                        help='')
+    parser.add_argument(
+        '--dataset',
+        type=str,
+        default='Earthquake',
+        choices=['Citibike', 'Earthquake', 'HawkesGMM', 'Pinwheel', 'COVID19', 'Mobility', 'HawkesGMM_2d', 'Crime', 'football', 'Independent'],
+        help='')
     parser.add_argument('--batch_size', type=int, default=64, help='')
     parser.add_argument('--lr', type=float, default=1e-4, help='学习率')
     parser.add_argument('--timesteps', type=int, default=500, help='')
@@ -85,20 +83,17 @@ def data_loader(writer):
     f = open('dataset/{}/data_train.pkl'.format(opt.dataset), 'rb')
     train_data = pickle.load(f)
     train_data = [[list(i) for i in u] for u in train_data]
-    train_data = [[[i[0], i[0] - u[index - 1][0] if index > 0 else i[0]] + i[1:] for index, i in enumerate(u)]
-                  for u in train_data]
+    train_data = [[[i[0], i[0] - u[index - 1][0] if index > 0 else i[0]] + i[1:] for index, i in enumerate(u)] for u in train_data]
 
     f = open('dataset/{}/data_val.pkl'.format(opt.dataset), 'rb')
     val_data = pickle.load(f)
     val_data = [[list(i) for i in u] for u in val_data]
-    val_data = [[[i[0], i[0] - u[index - 1][0] if index > 0 else i[0]] + i[1:] for index, i in enumerate(u)]
-                for u in val_data]
+    val_data = [[[i[0], i[0] - u[index - 1][0] if index > 0 else i[0]] + i[1:] for index, i in enumerate(u)] for u in val_data]
 
     f = open('dataset/{}/data_test.pkl'.format(opt.dataset), 'rb')
     test_data = pickle.load(f)
     test_data = [[list(i) for i in u] for u in test_data]
-    test_data = [[[i[0], i[0] - u[index - 1][0] if index > 0 else i[0]] + i[1:] for index, i in enumerate(u)]
-                 for u in test_data]
+    test_data = [[[i[0], i[0] - u[index - 1][0] if index > 0 else i[0]] + i[1:] for index, i in enumerate(u)] for u in test_data]
 
     data_all = train_data + test_data + val_data
 
@@ -221,10 +216,7 @@ if __name__ == "__main__":
     else:  # opt.model_type == 'rf'
         # 新的Rectified Flow模型创建代码
         model = RF_Diffusion(n_steps=opt.timesteps, dim=1 + opt.dim, condition=True, cond_dim=64).to(device)
-        rf = RectifiedFlow(model,
-                           loss_type=opt.loss_type,
-                           seq_length=1 + opt.dim,
-                           timesteps=opt.timesteps,
+        rf = RectifiedFlow(model, loss_type=opt.loss_type, seq_length=1 + opt.dim, timesteps=opt.timesteps,
                            sampling_timesteps=opt.samplingsteps).to(device)
         Model = RF_Model_all(transformer, rf)
 
@@ -257,8 +249,7 @@ if __name__ == "__main__":
                     event_time_non_mask, event_loc_non_mask, enc_out_non_mask = Batch2toModel(batch, Model.transformer)
 
                     # TODO: 这里只采样了一个，但显然多采样几次，然后集成更好（1. 期待更低的误差和方差 2. 假如方差和误差高度相关，那么就可以说盲预测的时候低方差也代表了我的预测就更准更可靠！）
-                    sampled_seq = Model.diffusion.sample(batch_size=event_time_non_mask.shape[0],
-                                                         cond=enc_out_non_mask)  # [bsz, 1, dim]
+                    sampled_seq = Model.diffusion.sample(batch_size=event_time_non_mask.shape[0], cond=enc_out_non_mask)  # [bsz, 1, dim]
 
                     # sampled_seq_temporal_all, sampled_seq_spatial_all = [], []
                     # for _ in range(100):  # 准备基于多次采样计算统计指标（如平均RMSE、置信区间等）
@@ -270,13 +261,12 @@ if __name__ == "__main__":
                     #                                    (torch.tensor([MAX[2:]]) - torch.tensor([MIN[2:]])) +
                     #                                    torch.tensor([MIN[2:]]).unsqueeze(dim=1))
 
-                    loss = Model.diffusion(torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1),
-                                           enc_out_non_mask)
+                    loss = Model.diffusion(torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
 
                     if opt.model_type == 'ddpm':
                         # Variational lower bound to approximate the NLL of the data
-                        vb, vb_temporal, vb_spatial = Model.diffusion.NLL_cal(
-                            torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
+                        vb, vb_temporal, vb_spatial = Model.diffusion.NLL_cal(torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1),
+                                                                              enc_out_non_mask)
                     else:  # opt.model_type == 'rf'
                         vb, vb_temporal, vb_spatial = Model.diffusion.calculate_neg_log_likelihood(
                             torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
@@ -324,24 +314,14 @@ if __name__ == "__main__":
                 writer.add_scalar(tag='Evaluation/loss_val', scalar_value=loss_test_all / total_num, global_step=itr)
 
                 writer.add_scalar(tag='Evaluation/NLL_val', scalar_value=vb_test_all / total_num, global_step=itr)
-                writer.add_scalar(tag='Evaluation/NLL_temporal_val',
-                                  scalar_value=vb_test_temporal_all / total_num,
-                                  global_step=itr)
-                writer.add_scalar(tag='Evaluation/NLL_spatial_val',
-                                  scalar_value=vb_test_spatial_all / total_num,
-                                  global_step=itr)
+                writer.add_scalar(tag='Evaluation/NLL_temporal_val', scalar_value=vb_test_temporal_all / total_num, global_step=itr)
+                writer.add_scalar(tag='Evaluation/NLL_spatial_val', scalar_value=vb_test_spatial_all / total_num, global_step=itr)
 
-                writer.add_scalar(tag='Evaluation/mae_temporal_val',
-                                  scalar_value=mae_temporal / total_num,
-                                  global_step=itr)
-                writer.add_scalar(tag='Evaluation/rmse_temporal_val',
-                                  scalar_value=np.sqrt(rmse_temporal / total_num),
-                                  global_step=itr)
+                writer.add_scalar(tag='Evaluation/mae_temporal_val', scalar_value=mae_temporal / total_num, global_step=itr)
+                writer.add_scalar(tag='Evaluation/rmse_temporal_val', scalar_value=np.sqrt(rmse_temporal / total_num), global_step=itr)
                 # writer.add_scalar(tag='Evaluation/rmse_temporal_mean_val',scalar_value=np.sqrt(rmse_temporal_mean/total_num),global_step=itr)
 
-                writer.add_scalar(tag='Evaluation/distance_spatial_val',
-                                  scalar_value=mae_spatial / total_num,
-                                  global_step=itr)
+                writer.add_scalar(tag='Evaluation/distance_spatial_val', scalar_value=mae_spatial / total_num, global_step=itr)
                 # writer.add_scalar(tag='Evaluation/distance_spatial_mean_val',scalar_value=mae_spatial_mean/total_num,global_step=itr)
 
                 ### TEST
@@ -360,15 +340,14 @@ if __name__ == "__main__":
                     end_time = time.time()
                     print('TEST_采样耗时：', end_time - encode_end_time)
 
-                    loss = Model.diffusion(torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1),
-                                           enc_out_non_mask)
+                    loss = Model.diffusion(torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
                     loss_end_time = time.time()
                     print('TEST_loss计算耗时：', loss_end_time - end_time)
 
                     if opt.model_type == 'ddpm':
                         # Variational lower bound to approximate the NLL of the data
-                        vb, vb_temporal, vb_spatial = Model.diffusion.NLL_cal(
-                            torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
+                        vb, vb_temporal, vb_spatial = Model.diffusion.NLL_cal(torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1),
+                                                                              enc_out_non_mask)
                     else:  # opt.model_type == 'rf'
                         vb, vb_temporal, vb_spatial = Model.diffusion.calculate_neg_log_likelihood(
                             torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
@@ -409,24 +388,14 @@ if __name__ == "__main__":
                 writer.add_scalar(tag='Evaluation/loss_test', scalar_value=loss_test_all / total_num, global_step=itr)
 
                 writer.add_scalar(tag='Evaluation/NLL_test', scalar_value=vb_test_all / total_num, global_step=itr)
-                writer.add_scalar(tag='Evaluation/NLL_temporal_test',
-                                  scalar_value=vb_test_temporal_all / total_num,
-                                  global_step=itr)
-                writer.add_scalar(tag='Evaluation/NLL_spatial_test',
-                                  scalar_value=vb_test_spatial_all / total_num,
-                                  global_step=itr)
+                writer.add_scalar(tag='Evaluation/NLL_temporal_test', scalar_value=vb_test_temporal_all / total_num, global_step=itr)
+                writer.add_scalar(tag='Evaluation/NLL_spatial_test', scalar_value=vb_test_spatial_all / total_num, global_step=itr)
 
-                writer.add_scalar(tag='Evaluation/mae_temporal_test',
-                                  scalar_value=mae_temporal / total_num,
-                                  global_step=itr)
-                writer.add_scalar(tag='Evaluation/rmse_temporal_test',
-                                  scalar_value=np.sqrt(rmse_temporal / total_num),
-                                  global_step=itr)
+                writer.add_scalar(tag='Evaluation/mae_temporal_test', scalar_value=mae_temporal / total_num, global_step=itr)
+                writer.add_scalar(tag='Evaluation/rmse_temporal_test', scalar_value=np.sqrt(rmse_temporal / total_num), global_step=itr)
                 # writer.add_scalar(tag='Evaluation/rmse_temporal_mean_test',scalar_value=np.sqrt(rmse_temporal_mean/total_num),global_step=itr)
 
-                writer.add_scalar(tag='Evaluation/distance_spatial_test',
-                                  scalar_value=mae_spatial / total_num,
-                                  global_step=itr)
+                writer.add_scalar(tag='Evaluation/distance_spatial_test', scalar_value=mae_spatial / total_num, global_step=itr)
                 # writer.add_scalar(tag='Evaluation/distance_spatial_mean_test',scalar_value=mae_spatial_mean/total_num,global_step=itr)
 
         # lr_init = 1e-3  # TODO: initial learning rate
