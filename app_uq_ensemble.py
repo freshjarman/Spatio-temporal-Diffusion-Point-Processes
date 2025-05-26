@@ -124,7 +124,7 @@ def data_loader(writer):
             Max.append(1)
             Min.append(0)
 
-    assert Min[1] > 0
+    assert Min[1] >= 0
     # normalize d_time and location (vector)
     train_data = [[[normalization(i[j], Max[j], Min[j]) for j in range(len(i))] for i in u] for u in train_data]
     test_data = [[[normalization(i[j], Max[j], Min[j]) for j in range(len(i))] for i in u] for u in test_data]
