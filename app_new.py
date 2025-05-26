@@ -345,6 +345,7 @@ if __name__ == "__main__":
                 # writer.add_scalar(tag='Evaluation/distance_spatial_mean_val',scalar_value=mae_spatial_mean/total_num,global_step=itr)
 
                 ### TEST
+                # TODO: add UQ/UC Metrics calculation during TEST phase
                 # 计算TEST阶段的耗时
                 start_time = time.time()
                 loss_test_all, vb_test_all, vb_test_temporal_all, vb_test_spatial_all = 0.0, 0.0, 0.0, 0.0

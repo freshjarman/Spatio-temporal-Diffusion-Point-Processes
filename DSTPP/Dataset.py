@@ -14,8 +14,8 @@ class EventData(torch.utils.data.Dataset):
         each dictionary contains: time_since_start, time_since_last_event, type_event
         """
         self.time = [[elem[0] for elem in inst] for inst in data]
-        self.time_norm = [[elem[1] for elem in inst] for inst in data] # d_t_norm
-        self.lng = [[elem[2] for elem in inst] for inst in data] 
+        self.time_norm = [[elem[1] for elem in inst] for inst in data]  # d_t_norm
+        self.lng = [[elem[2] for elem in inst] for inst in data]
         self.lat = [[elem[3] for elem in inst] for inst in data]
 
         self.length = len(data)
@@ -118,7 +118,7 @@ def collate_fn_1d(insts):
     return time, time_norm, lng
 
 
-def get_dataloader(data, batch_size, D=2, shuffle=True):
+def get_dataloader(data, batch_size, D=2, shuffle=True, num_workers=1):
     """ Prepare dataloader. """
 
     collate = {1: collate_fn_1d, 2: collate_fn, 3: collate_fn_3d}
@@ -127,5 +127,10 @@ def get_dataloader(data, batch_size, D=2, shuffle=True):
         ds = EventData(data) if D == 2 else EventData_3D(data)
     if D == 1:
         ds = EventData_1D(data)
-    dl = torch.utils.data.DataLoader(ds, num_workers=2, batch_size=batch_size, collate_fn=collate[D], shuffle=shuffle)
+    dl = torch.utils.data.DataLoader(
+        ds,
+        num_workers=num_workers,  # Number of subprocesses to use for data loading
+        batch_size=batch_size,
+        collate_fn=collate[D],
+        shuffle=shuffle)
     return dl
