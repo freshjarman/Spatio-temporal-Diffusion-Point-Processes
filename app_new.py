@@ -54,7 +54,7 @@ def get_args():
         '--dataset',
         type=str,
         default='Earthquake',
-        choices=['Citibike', 'Earthquake', 'HawkesGMM', 'Pinwheel', 'COVID19', 'Mobility', 'HawkesGMM_2d', 'Crime', 'football', 'Independent'],
+        choices=['Citibike', 'Earthquake', 'HawkesGMM', 'Pinwheel', 'COVID19', 'Mobility', 'HawkesGMM_2d', 'Crime', 'Football', 'Independent'],
         help='')
     parser.add_argument('--batch_size', type=int, default=64, help='')
     parser.add_argument('--lr', type=float, default=1e-4, help='学习率')

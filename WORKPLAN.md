@@ -57,7 +57,8 @@
 
 ## 2025.5.26
 1. update ensemble + uncertainty quantify/calibration module
-2. [ ] modify crime dataset to support `RF-STPP` framework, i.e. the each `data[2]` is event mark, which is not supported by `RF-STPP` framework now
+2. modify crime dataset to support `RF-STPP` framework, i.e. the each `data[2]` is event mark, which is not supported by `RF-STPP` framework now
+3. why CS metric is so bad in Crime for `RF-STPP`? 
 
 ## Other detailed settings
 [x] realize the `SinusodialPosEmb` in `RF_Diffusion/RF_Diffusion` - `self.time_mlp`
