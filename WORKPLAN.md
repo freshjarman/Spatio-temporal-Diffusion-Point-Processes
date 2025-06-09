@@ -57,14 +57,15 @@
 
 ## 2025.5.26
 1. update ensemble + uncertainty quantify/calibration module
-2. modify crime dataset to support `RF-STPP` framework, i.e. the each `data[2]` is event mark, which is not supported by `RF-STPP` framework now
+2. modify crime dataset to support `RF-STPP` framework, i.e. the each `data[2]` is event mark, which is not supported by `RF-STPP` framework now (**此处的Crime dataset来自SMASH仓库，并非DSTPP仓库原有的Crime数据集，务必注意！**)
 3. why CS metric is so bad in Crime for `RF-STPP`? 
 
 ## Other detailed settings
 [x] realize the `SinusodialPosEmb` in `RF_Diffusion/RF_Diffusion` - `self.time_mlp`
 [ ] complete abstract + introduction + method_summary in one page
-[ ] update uncertainty quantify/calibration module
+[x] update uncertainty quantify/calibration module, confidence levels = [0.5 0.6 0.7 0.8 0.9]
 
 ## Hyperparams setting
-1. sampling-steps (affect metrics: temporal-rmse & spatial-distance, further affect uncertainty metrics)
-[ ] epoch = 100后考虑lr * 0.1，因为他这个NLL_Spatial就直接转折上去了
+1. sampling-steps (affect metrics: temporal-rmse & spatial-distance, further affect uncertainty metrics): less more for FM compared with DDPM, to improve computational efficiency (speed)
+2. learning rate schedule: 考虑lr衰减，epoch = 100后考虑lr * 0.1，因为他这个NLL_Spatial就直接转折上去了
+3. ensemble: `n_samples` during sampling

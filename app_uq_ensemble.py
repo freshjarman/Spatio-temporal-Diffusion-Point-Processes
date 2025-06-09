@@ -239,6 +239,18 @@ if __name__ == "__main__":
 
     print("Model created successfully!")
 
+    # TODO: ADD Model loading if exists for further testing programs
+    # if opt.mode == 'test':
+    #     model_path = './ModelSave/dataset_{}_timesteps_{}/'.format(opt.dataset, opt.timesteps)
+    #     if not os.path.exists(model_path):
+    #         raise FileNotFoundError("Model path does not exist: {}".format(model_path))
+    #     print("Loading model from:", model_path)
+    #     Model.load_state_dict(torch.load(model_path + 'model_{}.pkl'.format(opt.total_epochs - 1), map_location=device))
+    #     print("Model loaded successfully!")
+    # else:
+    #     print("Training mode, no model loading.")
+    # Model.to(device)
+
     trainloader, testloader, valloader, (MAX, MIN) = data_loader(writer)
     print("Data loaded successfully!")
 
@@ -320,7 +332,7 @@ if __name__ == "__main__":
                     mae_temporal, rmse_temporal, mae_spatial, total_num = 0.0, 0.0, 0.0, 0.0
 
                     # UQ metrics accumulators
-                    target_levels = np.linspace(0.5, 0.9, 5)
+                    target_levels = np.linspace(0.5, 0.9, 5)  # 0.5 0.6 0.7 0.8 0.9
                     cs_time_all = torch.zeros(len(target_levels))
                     cs_loc_all = torch.zeros(len(target_levels))
                     cs2_time_all = torch.zeros(len(target_levels))
@@ -414,6 +426,8 @@ if __name__ == "__main__":
                     # Log test metrics
                     writer.add_scalar(tag='Evaluation/loss_test', scalar_value=loss_test_all / total_num, global_step=itr)
                     writer.add_scalar(tag='Evaluation/NLL_test', scalar_value=vb_test_all / total_num, global_step=itr)
+                    writer.add_scalar(tag='Evaluation/NLL_temporal_test', scalar_value=vb_test_temporal_all / total_num, global_step=itr)
+                    writer.add_scalar(tag='Evaluation/NLL_spatial_test', scalar_value=vb_test_spatial_all / total_num, global_step=itr)
                     writer.add_scalar(tag='Evaluation/mae_temporal_test', scalar_value=mae_temporal / total_num, global_step=itr)
                     writer.add_scalar(tag='Evaluation/rmse_temporal_test', scalar_value=np.sqrt(rmse_temporal / total_num), global_step=itr)
                     writer.add_scalar(tag='Evaluation/distance_spatial_test', scalar_value=mae_spatial / total_num, global_step=itr)
@@ -430,6 +444,9 @@ if __name__ == "__main__":
                     print(f'Calibration Score (Quantile) - Location: {cs2_loc_all}')
                     print(f'Calibration Score (Mean) - Time: {cs_time_all.mean().item():.4f}')
                     print(f'Calibration Score (Mean) - Location: {cs_loc_all.mean().item():.4f}')
+                    print(f'NLL Temporal: {vb_test_temporal_all / total_num:.4f}')  # NLL
+                    print(f'NLL Spatial: {vb_test_spatial_all / total_num:.4f}')
+                    print(f'NLL Total: {vb_test_all / total_num:.4f}')
                     print(f'MAE Temporal: {mae_temporal / total_num:.4f}')
                     print(f'RMSE Temporal: {np.sqrt(rmse_temporal / total_num):.4f}')
                     print(f'MAE Spatial: {mae_spatial / total_num:.4f}')
