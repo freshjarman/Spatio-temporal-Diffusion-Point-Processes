@@ -17,6 +17,7 @@ ModelSave/
 *.apk
 *.pyc
 *.ipynb_checkpoints/
+*.json
 
 
 # Project files, i.e. `.project`, `.actionScriptProperties` and `.flexProperties`

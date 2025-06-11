@@ -239,7 +239,8 @@ class RectifiedFlow(nn.Module):
 
         # 积分步长 - 欧拉法或Heun法，比简单的欧拉法更精确（2-order），带有预测-校正步骤
         solver_name = "Euler" if euler_only else "Heun"
-        for i in tqdm(range(steps), desc=f'RF sampling with ({solver_name}) solver'):
+        # for i in tqdm(range(steps), desc=f'RF sampling with ({solver_name}) solver'):
+        for i in range(steps):
             # 当前时间：从1到0
             t_now = 1.0 - i * step_size
             t_next = max(1.0 - (i + 1) * step_size, 0.0)
