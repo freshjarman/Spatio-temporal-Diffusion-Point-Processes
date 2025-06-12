@@ -226,7 +226,6 @@ if __name__ == "__main__":
 
     print("Model created successfully!")
 
-    # TODO: ADD Model loading if exists for further testing programs
     if opt.mode == 'test':
         model_path = MODEL_PATH
         if not os.path.exists(model_path):
@@ -257,6 +256,11 @@ if __name__ == "__main__":
     all_cs2_time = []
     all_cs2_loc = []
 
+    # 添加NLL相关的统计变量
+    all_nll_total = []
+    all_nll_temporal = []
+    all_nll_spatial = []
+
     # 运行10次测试
     for run_idx in range(10):
         print(f'\nRun {run_idx + 1}/10:')
@@ -269,11 +273,11 @@ if __name__ == "__main__":
             mae_temporal, rmse_temporal, mae_spatial, total_num = 0.0, 0.0, 0.0, 0.0
 
             # UQ metrics accumulators
-            target_levels = np.linspace(0.5, 0.9, 5)  # 0.5 0.6 0.7 0.8 0.9
-            cs_time_all = torch.zeros(len(target_levels))
-            cs_loc_all = torch.zeros(len(target_levels))
-            cs2_time_all = torch.zeros(len(target_levels))
-            cs2_loc_all = torch.zeros(len(target_levels))
+            # target_levels = np.linspace(0.5, 0.9, 5)  # 0.5 0.6 0.7 0.8 0.9
+            # cs_time_all = torch.zeros(len(target_levels))
+            # cs_loc_all = torch.zeros(len(target_levels))
+            # cs2_time_all = torch.zeros(len(target_levels))
+            # cs2_loc_all = torch.zeros(len(target_levels))
 
             for batch in testloader:
                 event_time_non_mask, event_loc_non_mask, enc_out_non_mask = Batch2toModel(batch, Model.transformer)
@@ -282,15 +286,10 @@ if __name__ == "__main__":
                 sampled_temporal_all, sampled_spatial_all = ensemble_sample(Model, event_time_non_mask.shape[0], enc_out_non_mask, opt.n_ensemble,
                                                                             opt.dim)
 
-                # Single sample for basic metrics
-                # sampled_seq = Model.diffusion.sample(batch_size=event_time_non_mask.shape[0], cond=enc_out_non_mask)
-
-                # loss = Model.diffusion(torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
-                """
                 # NLL calculation for DDPM or RF models
                 if opt.model_type == 'ddpm':
                     vb, vb_temporal, vb_spatial = Model.diffusion.NLL_cal(torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1),
-                                                                            enc_out_non_mask)
+                                                                          enc_out_non_mask)
                 else:
                     vb, vb_temporal, vb_spatial = Model.diffusion.calculate_neg_log_likelihood(
                         torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
@@ -298,23 +297,9 @@ if __name__ == "__main__":
                 vb_test_all += vb
                 vb_test_temporal_all += vb_temporal
                 vb_test_spatial_all += vb_spatial
-                # loss_test_all += loss.item() * event_time_non_mask.shape[0]
+
+                # # 注释掉其他指标的计算
                 """
-
-                # # Basic metrics - 使用单词预测结果
-                # real = (event_time_non_mask[:, 0, :].detach().cpu()) * (MAX[1] - MIN[1]) + MIN[1]
-                # gen = (sampled_seq[:, 0, :1].detach().cpu()) * (MAX[1] - MIN[1]) + MIN[1]
-                # mae_temporal += torch.abs(real - gen).sum().item()
-                # rmse_temporal += ((real - gen)**2).sum().item()
-
-                # real = event_loc_non_mask[:, 0, :].detach().cpu()
-                # real = real * (torch.tensor([MAX[2:]]) - torch.tensor([MIN[2:]])) + torch.tensor([MIN[2:]])
-                # gen = sampled_seq[:, 0, -opt.dim:].detach().cpu()
-                # gen = gen * (torch.tensor([MAX[2:]]) - torch.tensor([MIN[2:]])) + torch.tensor([MIN[2:]])
-                # mae_spatial += torch.sqrt(torch.sum((real - gen)**2, dim=-1)).sum().item()
-
-                # total_num += gen.shape[0]
-
                 # Basic metrics - 使用ensemble集成结果
                 # 计算ensemble预测的均值作为最终预测，预期：ensemble的均值预测通常比单次采样更稳定和准确
                 ensemble_temporal_mean = torch.stack(sampled_temporal_all, dim=0).mean(dim=0)  # [bsz, 1]
@@ -389,7 +374,34 @@ if __name__ == "__main__":
             print(f'  MAE Spatial: {current_mae_spatial:.4f}')
             print(f'  Calibration Score (Mean) - Time: {current_cs_time_mean:.4f}')
             print(f'  Calibration Score (Mean) - Location: {current_cs_loc_mean:.4f}')
+            """
+        # 计算当前运行的平均NLL
+        avg_nll_total = vb_test_all / len(testloader)
+        avg_nll_temporal = vb_test_temporal_all / len(testloader)
+        avg_nll_spatial = vb_test_spatial_all / len(testloader)
 
+        # 存储当前运行的结果
+        all_nll_total.append(avg_nll_total)
+        all_nll_temporal.append(avg_nll_temporal)
+        all_nll_spatial.append(avg_nll_spatial)
+
+        print(f'Run {run_idx + 1} - NLL Total: {avg_nll_total:.4f}, NLL Temporal: {avg_nll_temporal:.4f}, NLL Spatial: {avg_nll_spatial:.4f}')
+
+    # 计算10次运行的统计结果
+    nll_total_mean = np.mean(all_nll_total)
+    nll_total_std = np.std(all_nll_total)
+    nll_temporal_mean = np.mean(all_nll_temporal)
+    nll_temporal_std = np.std(all_nll_temporal)
+    nll_spatial_mean = np.mean(all_nll_spatial)
+    nll_spatial_std = np.std(all_nll_spatial)
+
+    print('\n' + '=' * 50)
+    print('10次运行的统计结果:')
+    print(f'NLL Total: {nll_total_mean:.4f} ± {nll_total_std:.4f}')
+    print(f'NLL Temporal: {nll_temporal_mean:.4f} ± {nll_temporal_std:.4f}')
+    print(f'NLL Spatial: {nll_spatial_mean:.4f} ± {nll_spatial_std:.4f}')
+    print('=' * 50)
+    """
     # 计算所有运行的统计信息
     print('\n' + '=' * 40)
     print('FINAL STATISTICAL SUMMARY (10 runs):')
@@ -482,3 +494,4 @@ if __name__ == "__main__":
     with open(results_file, 'w') as f:
         json.dump(results_summary, f, indent=2)
     print(f'Results saved to: {results_file}')
+    """

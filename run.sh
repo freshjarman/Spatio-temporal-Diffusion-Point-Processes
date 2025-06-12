@@ -13,4 +13,5 @@ python app.py --dataset Independent --mode train --timesteps 500 --samplingsteps
 # os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 $env:KMP_DUPLICATE_LIB_OK="TRUE"; python app_uq_ensemble.py --dataset Earthquake --mode train --model_type rf --enable_uq --n_ensemble 10 --timesteps 500 --samplingsteps 50 --batch_size 256 --total_epochs 800 --lr 5e-4 --cuda_id 0 
 # --timesteps 必须对应正确
-$env:KMP_DUPLICATE_LIB_OK="TRUE"; python app_uq_ensemble_test.py --dataset Earthquake --mode test --model_type rf --timesteps 1000 --n_ensemble 10 --samplingsteps 50 --batch_size 64 --cuda_id 0
+$env:KMP_DUPLICATE_LIB_OK="TRUE"; python app_uq_ensemble_test.py --dataset Earthquake --mode test --model_type rf --timesteps 1000 --n_ensemble 100 --samplingsteps 50 --batch_size 64 --cuda_id 0
+$env:KMP_DUPLICATE_LIB_OK="TRUE"; python app_uq_ensemble_test.py --dataset Crime --mode test --model_type rf --timesteps 50 --n_ensemble 100 --samplingsteps 5 --batch_size 256
