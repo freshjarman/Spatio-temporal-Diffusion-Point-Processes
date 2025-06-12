@@ -298,6 +298,10 @@ if __name__ == "__main__":
                 vb_test_temporal_all += vb_temporal
                 vb_test_spatial_all += vb_spatial
 
+                ensemble_temporal_mean = torch.stack(sampled_temporal_all, dim=0).mean(dim=0)  # [bsz, 1]
+                gen_temporal = (ensemble_temporal_mean.detach().cpu()) * (MAX[1] - MIN[1]) + MIN[1]
+                total_num += gen_temporal.shape[0]
+
                 # # 注释掉其他指标的计算
                 """
                 # Basic metrics - 使用ensemble集成结果
@@ -376,9 +380,9 @@ if __name__ == "__main__":
             print(f'  Calibration Score (Mean) - Location: {current_cs_loc_mean:.4f}')
             """
         # 计算当前运行的平均NLL
-        avg_nll_total = vb_test_all / len(testloader)
-        avg_nll_temporal = vb_test_temporal_all / len(testloader)
-        avg_nll_spatial = vb_test_spatial_all / len(testloader)
+        avg_nll_total = vb_test_all / total_num
+        avg_nll_temporal = vb_test_temporal_all / total_num
+        avg_nll_spatial = vb_test_spatial_all / total_num
 
         # 存储当前运行的结果
         all_nll_total.append(avg_nll_total)
