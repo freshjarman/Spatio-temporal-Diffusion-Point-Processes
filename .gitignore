@@ -9,6 +9,8 @@ dataset/
 .vscode/
 *logs/
 ModelSave/
+figures/
+jsons/
 
 # Executables
 *.swf
@@ -23,5 +25,7 @@ ModelSave/
 # Project files, i.e. `.project`, `.actionScriptProperties` and `.flexProperties`
 # should NOT be excluded as they contain compiler settings and other important
 # information for Eclipse / Flash Builder.
+
+# demo scripts
 wttest.ipynb
 app_uq_ensemble_debug.py

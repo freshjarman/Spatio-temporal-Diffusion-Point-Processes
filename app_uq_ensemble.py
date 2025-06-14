@@ -310,7 +310,7 @@ if __name__ == "__main__":
                 # TODO: Check if the logic and patience is suitable for early stopping?
                 if loss_test_all > min_loss_test:
                     early_stop += 1
-                    if early_stop >= 20:
+                    if early_stop >= 200:
                         break
                 else:
                     early_stop = 0

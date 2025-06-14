@@ -226,7 +226,6 @@ if __name__ == "__main__":
 
     print("Model created successfully!")
 
-    # TODO: ADD Model loading if exists for further testing programs
     if opt.mode == 'test':
         model_path = MODEL_PATH
         if not os.path.exists(model_path):
@@ -317,8 +316,8 @@ if __name__ == "__main__":
 
                 # Basic metrics - 使用ensemble集成结果
                 # 计算ensemble预测的均值作为最终预测，预期：ensemble的均值预测通常比单次采样更稳定和准确
-                ensemble_temporal_mean = torch.stack(sampled_temporal_all, dim=0).mean(dim=0)  # [bsz, 1]
-                ensemble_spatial_mean = torch.stack(sampled_spatial_all, dim=0).mean(dim=0)  # [bsz, dim]
+                ensemble_temporal_mean = torch.stack(sampled_temporal_all, dim=0).mean(dim=0)  # [n_ensemble, bsz, 1]
+                ensemble_spatial_mean = torch.stack(sampled_spatial_all, dim=0).mean(dim=0)  # [n_ensemble, bsz, dim]
 
                 # Temporal metrics
                 real_time_gt = (event_time_non_mask[:, 0, :].detach().cpu()) * (MAX[1] - MIN[1]) + MIN[1]
@@ -336,31 +335,32 @@ if __name__ == "__main__":
                 total_num += gen_temporal.shape[0]
 
                 # UQ evaluation: calculate calibration scores
-                sampled_temporal_denorm = []
-                sampled_spatial_denorm = []
+                if opt.n_ensemble >= 10:  # Only perform UQ evaluation if ensemble size is sufficient
+                    sampled_temporal_denorm = []
+                    sampled_spatial_denorm = []
 
-                for temp_sample in sampled_temporal_all:
-                    temp_denorm = temp_sample.detach().cpu() * (MAX[1] - MIN[1]) + MIN[1]
-                    sampled_temporal_denorm.append(temp_denorm.unsqueeze(1))
+                    for temp_sample in sampled_temporal_all:
+                        temp_denorm = temp_sample.detach().cpu() * (MAX[1] - MIN[1]) + MIN[1]
+                        sampled_temporal_denorm.append(temp_denorm.unsqueeze(1))
 
-                for spat_sample in sampled_spatial_all:
-                    spat_denorm = spat_sample.detach().cpu() * (torch.tensor([MAX[2:]]) - torch.tensor([MIN[2:]])) + torch.tensor([MIN[2:]])
-                    sampled_spatial_denorm.append(spat_denorm.unsqueeze(1))
+                    for spat_sample in sampled_spatial_all:
+                        spat_denorm = spat_sample.detach().cpu() * (torch.tensor([MAX[2:]]) - torch.tensor([MIN[2:]])) + torch.tensor([MIN[2:]])
+                        sampled_spatial_denorm.append(spat_denorm.unsqueeze(1))
 
-                # Calculate calibration scores
-                calibration_score = get_calibration_score(
-                    sampled_temporal_denorm,
-                    sampled_spatial_denorm,
-                    None,  # No marks in DSTPP Task
-                    real_time_gt,
-                    real_loc_gt,
-                    target_levels=target_levels,
-                    model='DSTPP')
+                    # Calculate calibration scores
+                    calibration_score = get_calibration_score(
+                        sampled_temporal_denorm,
+                        sampled_spatial_denorm,
+                        None,  # No marks in DSTPP Task
+                        real_time_gt,
+                        real_loc_gt,
+                        target_levels=target_levels,
+                        model='DSTPP')
 
-                cs_time_all += calibration_score[0]
-                cs_loc_all += calibration_score[1]
-                cs2_time_all += calibration_score[2]
-                cs2_loc_all += calibration_score[3]
+                    cs_time_all += calibration_score[0]
+                    cs_loc_all += calibration_score[1]
+                    cs2_time_all += calibration_score[2]
+                    cs2_loc_all += calibration_score[3]
 
             # Normalize UQ metrics
             cs_time_all /= total_num
@@ -478,7 +478,7 @@ if __name__ == "__main__":
     # 保存到json文件
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     filename_without_ext = MODEL_PATH.split('/')[-1].split('.')[0]
-    results_file = filename_without_ext + f'uq_test_results_{opt.dataset}_{timestamp}.json'
+    results_file = f'./jsons/{filename_without_ext}_uq_test_results_{opt.dataset}_{timestamp}.json'
     with open(results_file, 'w') as f:
         json.dump(results_summary, f, indent=2)
     print(f'Results saved to: {results_file}')
