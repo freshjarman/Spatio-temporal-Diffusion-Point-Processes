@@ -140,10 +140,7 @@ class Residual(nn.Module):
 
 
 def Upsample(dim, dim_out=None):
-    return nn.Sequential(nn.Upsample(scale_factor=2, mode='nearest'), nn.Conv1d(dim,
-                                                                                default(dim_out, dim),
-                                                                                3,
-                                                                                padding=1))
+    return nn.Sequential(nn.Upsample(scale_factor=2, mode='nearest'), nn.Conv1d(dim, default(dim_out, dim), 3, padding=1))
 
     return nn.Conv1d(dim, default(dim_out, dim), 4, 2, 1)
 
@@ -306,8 +303,7 @@ class GaussianDiffusion_ST(nn.Module):
 
         # sampling related parameters
 
-        self.sampling_timesteps = default(
-            sampling_timesteps, timesteps)  # default num sampling timesteps to number of timesteps at training
+        self.sampling_timesteps = default(sampling_timesteps, timesteps)  # default num sampling timesteps to number of timesteps at training
 
         assert self.sampling_timesteps <= timesteps
         self.is_ddim_sampling = self.sampling_timesteps < timesteps
@@ -338,26 +334,20 @@ class GaussianDiffusion_ST(nn.Module):
         register_buffer('posterior_variance', posterior_variance)
 
         # below: log calculation clipped because the posterior variance is 0 at the beginning of the diffusion chain
-        register_buffer('posterior_log_variance_clipped',
-                        torch.log(posterior_variance.clamp(min=posterior_variance[1])))
+        register_buffer('posterior_log_variance_clipped', torch.log(posterior_variance.clamp(min=posterior_variance[1])))
         register_buffer('posterior_mean_coef1', betas * torch.sqrt(alphas_cumprod_prev) / (1. - alphas_cumprod))
         register_buffer('posterior_mean_coef2', (1. - alphas_cumprod_prev) * torch.sqrt(alphas) / (1. - alphas_cumprod))
 
         # calculate p2 reweighting
 
-        register_buffer('p2_loss_weight',
-                        (p2_loss_weight_k + alphas_cumprod / (1 - alphas_cumprod))**-p2_loss_weight_gamma)
+        register_buffer('p2_loss_weight', (p2_loss_weight_k + alphas_cumprod / (1 - alphas_cumprod))**-p2_loss_weight_gamma)
 
     def _vb_terms_bpd(self, x_start, x_t, t, *, clip_denoised: bool, cond=None):
         true_mean, _, true_log_variance_clipped = self.q_posterior(x_start=x_start, x_t=x_t, t=t)
-        model_mean, _, model_log_variance, pred_xstart, _ = self.p_mean_variance(x=x_t,
-                                                                                 t=t,
-                                                                                 clip_denoised=clip_denoised,
-                                                                                 cond=cond)
+        model_mean, _, model_log_variance, pred_xstart, _ = self.p_mean_variance(x=x_t, t=t, clip_denoised=clip_denoised, cond=cond)
         kl = normal_kl(true_mean, true_log_variance_clipped, model_mean, model_log_variance)
         kl_all = mean_flat(kl) / np.log(np.e)  # DDPM中计算bits-per-dim则除的是np.log(2)
-        decoder_nll = -discretized_gaussian_log_likelihood(x_start, model_mean,
-                                                           0.5 * model_log_variance)  # 之前是0.5 * model_log_variance
+        decoder_nll = -discretized_gaussian_log_likelihood(x_start, model_mean, 0.5 * model_log_variance)  # 之前是0.5 * model_log_variance
         assert decoder_nll.shape == x_start.shape
         decoder_nll_all = mean_flat(decoder_nll) / np.log(np.e)
 
@@ -377,8 +367,7 @@ class GaussianDiffusion_ST(nn.Module):
 
     def predict_start_from_noise(self, x_t, t, noise):
         # x0 = sqrt(1/ᾱ_t) * xt - sqrt(1/ᾱ_t - 1) * ε (refer to eq(2) and paragraph above)
-        return (extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t -
-                extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape) * noise)
+        return (extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t - extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape) * noise)
 
     def predict_noise_from_start(self, x_t, t, x0):
         return (
@@ -387,16 +376,13 @@ class GaussianDiffusion_ST(nn.Module):
         )
 
     def predict_v(self, x_start, t, noise):
-        return (extract(self.sqrt_alphas_cumprod, t, x_start.shape) * noise -
-                extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * x_start)
+        return (extract(self.sqrt_alphas_cumprod, t, x_start.shape) * noise - extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * x_start)
 
     def predict_start_from_v(self, x_t, t, v):
-        return (extract(self.sqrt_alphas_cumprod, t, x_t.shape) * x_t -
-                extract(self.sqrt_one_minus_alphas_cumprod, t, x_t.shape) * v)
+        return (extract(self.sqrt_alphas_cumprod, t, x_t.shape) * x_t - extract(self.sqrt_one_minus_alphas_cumprod, t, x_t.shape) * v)
 
     def q_posterior(self, x_start, x_t, t):  # refer to weng's blog (below Fig.3): q(x_{t-1}|x_t,x_0)
-        posterior_mean = (extract(self.posterior_mean_coef1, t, x_t.shape) * x_start +
-                          extract(self.posterior_mean_coef2, t, x_t.shape) * x_t)
+        posterior_mean = (extract(self.posterior_mean_coef1, t, x_t.shape) * x_start + extract(self.posterior_mean_coef2, t, x_t.shape) * x_t)
         posterior_variance = extract(self.posterior_variance, t, x_t.shape)
         posterior_log_variance_clipped = extract(self.posterior_log_variance_clipped, t, x_t.shape)
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
@@ -474,8 +460,8 @@ class GaussianDiffusion_ST(nn.Module):
         batch, device, total_timesteps, sampling_timesteps, eta, objective = shape[
             0], self.betas.device, self.num_timesteps, self.sampling_timesteps, self.ddim_sampling_eta, self.objective
 
-        times = torch.linspace(-1, total_timesteps - 1, steps=sampling_timesteps +
-                               1)  # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
+        times = torch.linspace(-1, total_timesteps - 1,
+                               steps=sampling_timesteps + 1)  # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
         times = list(reversed(times.int().tolist()))
         time_pairs = list(zip(times[:-1], times[1:]))  # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
 
@@ -486,11 +472,7 @@ class GaussianDiffusion_ST(nn.Module):
         for time, time_next in tqdm(time_pairs, desc='sampling loop time step'):
             time_cond = torch.full((batch, ), time, device=device, dtype=torch.long)
             self_cond = x_start if self.self_condition else None
-            pred_noise, x_start, *_ = self.model_predictions(img,
-                                                             time_cond,
-                                                             self_cond,
-                                                             clip_x_start=clip_denoised,
-                                                             cond=cond)
+            pred_noise, x_start, *_ = self.model_predictions(img, time_cond, self_cond, clip_x_start=clip_denoised, cond=cond)
 
             if time_next < 0:
                 img = x_start
@@ -536,8 +518,7 @@ class GaussianDiffusion_ST(nn.Module):
     def q_sample(self, x_start, t, noise=None):
         noise = default(noise, lambda: torch.randn_like(x_start))
         # x_t = sqrt(ᾱ_t) * x_0 + sqrt(1 - ᾱ_t) * ε (refer to eq(2) and paragraph above)
-        return (extract(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start +
-                extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise)
+        return (extract(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start + extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise)
 
     @property
     def loss_fn(self):
@@ -665,11 +646,7 @@ class GaussianDiffusion_ST(nn.Module):
             x_t = self.q_sample(x_start=x_start, t=t_batch, noise=noise)
             # Calculate VLB term at the current timestep
             with torch.no_grad():
-                vb, vb_temporal, vb_spatial, _ = self._vb_terms_bpd(x_start=x_start,
-                                                                    x_t=x_t,
-                                                                    t=t_batch,
-                                                                    clip_denoised=clip_denoised,
-                                                                    cond=cond)
+                vb, vb_temporal, vb_spatial, _ = self._vb_terms_bpd(x_start=x_start, x_t=x_t, t=t_batch, clip_denoised=clip_denoised, cond=cond)
             vb_all.append(vb.unsqueeze(dim=1))
             vb_temporal_all.append(vb_temporal.unsqueeze(dim=1))
             vb_spatial_all.append(vb_spatial.unsqueeze(dim=1))
@@ -726,8 +703,7 @@ class ST_Diffusion(nn.Module):
 
         time_dim = num_units
 
-        self.time_mlp = nn.Sequential(sinu_pos_emb, nn.Linear(fourier_dim, time_dim), nn.GELU(),
-                                      nn.Linear(time_dim, time_dim))
+        self.time_mlp = nn.Sequential(sinu_pos_emb, nn.Linear(fourier_dim, time_dim), nn.GELU(), nn.Linear(time_dim, time_dim))
 
         self.linears_spatial = nn.ModuleList([
             nn.Linear(dim - 1, num_units),
@@ -753,36 +729,26 @@ class ST_Diffusion(nn.Module):
 
         self.output_temporal = nn.Sequential(nn.Linear(num_units, num_units), nn.ReLU(), nn.Linear(num_units, 1))
 
-        self.linear_t = nn.Sequential(nn.Linear(num_units * 2, num_units), nn.ReLU(), nn.Linear(num_units, num_units),
-                                      nn.ReLU(), nn.Linear(num_units, 2))
+        self.linear_t = nn.Sequential(nn.Linear(num_units * 2, num_units), nn.ReLU(), nn.Linear(num_units, num_units), nn.ReLU(),
+                                      nn.Linear(num_units, 2))
 
-        self.linear_s = nn.Sequential(nn.Linear(num_units * 2, num_units), nn.ReLU(), nn.Linear(num_units, num_units),
-                                      nn.ReLU(), nn.Linear(num_units, 2))
+        self.linear_s = nn.Sequential(nn.Linear(num_units * 2, num_units), nn.ReLU(), nn.Linear(num_units, num_units), nn.ReLU(),
+                                      nn.Linear(num_units, 2))
 
         self.cond_all = nn.Sequential(nn.Linear(cond_dim * 3, num_units), nn.ReLU(), nn.Linear(num_units, num_units))
 
-        self.cond_temporal = nn.ModuleList(
-            [nn.Linear(cond_dim, num_units),
-             nn.Linear(cond_dim, num_units),
-             nn.Linear(cond_dim, num_units)])
+        self.cond_temporal = nn.ModuleList([nn.Linear(cond_dim, num_units), nn.Linear(cond_dim, num_units), nn.Linear(cond_dim, num_units)])
 
-        self.cond_spatial = nn.ModuleList(
-            [nn.Linear(cond_dim, num_units),
-             nn.Linear(cond_dim, num_units),
-             nn.Linear(cond_dim, num_units)])
+        self.cond_spatial = nn.ModuleList([nn.Linear(cond_dim, num_units), nn.Linear(cond_dim, num_units), nn.Linear(cond_dim, num_units)])
 
-        self.cond_joint = nn.ModuleList(
-            [nn.Linear(cond_dim, num_units),
-             nn.Linear(cond_dim, num_units),
-             nn.Linear(cond_dim, num_units)])
+        self.cond_joint = nn.ModuleList([nn.Linear(cond_dim, num_units), nn.Linear(cond_dim, num_units), nn.Linear(cond_dim, num_units)])
 
     def get_attn(self, x, t, x_self_cond=None, cond=None):
         x_spatial, x_temporal = x[:, :, 1:].clone(), x[:, :, :1].clone()
 
         hidden_dim = int(cond.shape[-1] / 3)
 
-        cond_temporal, cond_spatial, cond_joint = cond[:, :, :hidden_dim], cond[:, :, hidden_dim:2 *
-                                                                                hidden_dim], cond[:, :, 2 * hidden_dim:]
+        cond_temporal, cond_spatial, cond_joint = cond[:, :, :hidden_dim], cond[:, :, hidden_dim:2 * hidden_dim], cond[:, :, 2 * hidden_dim:]
 
         cond = self.cond_all(cond)
         t_embedding = self.time_mlp(t).unsqueeze(dim=1)
@@ -800,8 +766,7 @@ class ST_Diffusion(nn.Module):
 
         hidden_dim = int(cond.shape[-1] / 3)  # d_model
 
-        cond_temporal, cond_spatial, cond_joint = cond[:, :, :hidden_dim], cond[:, :, hidden_dim:2 *
-                                                                                hidden_dim], cond[:, :, 2 * hidden_dim:]
+        cond_temporal, cond_spatial, cond_joint = cond[:, :, :hidden_dim], cond[:, :, hidden_dim:2 * hidden_dim], cond[:, :, 2 * hidden_dim:]
 
         cond = self.cond_all(cond)  # (bsz, 1, d_model)
         t_embedding = self.time_mlp(t).unsqueeze(dim=1)  # (bsz, 1, d_model)

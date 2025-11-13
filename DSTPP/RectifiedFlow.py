@@ -267,40 +267,6 @@ class RectifiedFlow(nn.Module):
         x = unnormalize_to_zero_to_one(x)
         return x  # [bsz, 1, dim] (1 + loc_dim)
 
-    # NOT USED!
-    def NLL_cal(self, x_start, cond):
-        """
-        计算整个轨迹的负对数似然的近似指标，他不是NLL，但它也是指标越小代表模型越好
-        RF不是显式概率模型，这是启发式方法，即他不是严格的VLB，数值上不能近似NLL
-        """
-        # 相较于DiffusionModel.py中的NLL_cal(self, img, cond, noise=None)，这里只是v上的l2损失，数值上应该不完全等于VLB？
-        x_start = normalize_to_neg_one_to_one(x_start)
-        batch_size = x_start.shape[0]
-        device = x_start.device
-
-        # 选择评估点
-        sample_count = min(100, self.num_timesteps)  # 用100个点来近似
-        t_indices = torch.linspace(0, self.num_timesteps - 1, sample_count, dtype=torch.long, device=device)
-
-        total_loss, temporal_loss, spatial_loss = 0.0, 0.0, 0.0
-
-        for idx in t_indices:
-            # 为每个batch样本获取相同的时间点
-            t_batch = torch.full((batch_size, ), idx, device=device, dtype=torch.long)
-
-            with torch.no_grad():
-                loss, loss_temporal, loss_spatial = self.p_losses(x_start, t_batch, cond)
-
-            total_loss += loss.item()
-            temporal_loss += loss_temporal.item()
-            spatial_loss += loss_spatial.item()
-
-        # 计算平均值
-        total_loss /= len(t_indices)
-        temporal_loss /= len(t_indices)
-        spatial_loss /= len(t_indices)
-
-        return total_loss, temporal_loss, spatial_loss
 
     @torch.no_grad()
     def calculate_neg_log_likelihood(self, x_start, cond=None, rtol=1e-5, atol=1e-5, method='dopri5'):
