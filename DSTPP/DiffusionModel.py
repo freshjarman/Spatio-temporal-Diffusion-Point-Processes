@@ -1,3 +1,22 @@
+"""
+DiffusionModel.py
+
+This module implements the Spatio-temporal Diffusion Model for Point Processes.
+It contains the core components for the diffusion-based generative model, including:
+
+- GaussianDiffusion_ST: A class handling the forward and reverse diffusion processes,
+  including training loss calculation (p_losses) and sampling (p_sample_loop, ddim_sample).
+  It supports both standard Gaussian diffusion and DDIM sampling.
+
+- ST_Diffusion: The neural network architecture used for denoising. It employs a
+  co-attention mechanism to handle spatial and temporal dependencies separately and jointly.
+
+- Helper functions and classes: Various utilities for beta schedules, positional embeddings,
+  and normalization.
+
+The model is designed to generate and evaluate spatio-temporal events.
+"""
+
 import math
 from random import random
 from functools import partial

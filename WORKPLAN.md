@@ -1,6 +1,6 @@
-## Work Plan Overview
-- [ ] 1. Rectifiedflow framework for DSTPP (model/train/inference)
-  - [ ] 1.1 Rectifiedflow model
+# Work Plan Overview
+- [x] 1. Rectifiedflow framework for DSTPP (model/train/inference)
+  - [x] 1.1 Rectifiedflow model
     - Spatio-temporal encoder
       - now use the same `DSTPP/Models/Transformer_ST` as encoder (section 3.1)
     - Spatio-temporal decoder
@@ -13,9 +13,13 @@
 - [x] 2. NLL_Cal for rectifiedflow
   - [x] 2.1 NLL_cal codes
   - [x] 2.2 NLL_cal math equations etc. (for paper writing)
-- [ ] 3. Uncertainty (refer to Paper `SMURF-THP` & `SMASH`)
-  - [ ] 3.1 Uncertainty quantify metrics codes
-  - [ ] 3.2 Uncertainty calibration codes
+- [x] 3. Uncertainty (refer to Paper `SMURF-THP` & `SMASH`)
+  - 3.1 Uncertainty quantify metrics codes
+  - 3.2 Uncertainty calibration codes
+- [ ] 4. re-conduct STPP experiments on baselines for fair results, refer to `SMASH` repo
+  - 4.1 Data processing part (event marks' effect should be removed)
+  - 4.2 Normalization method (log-normalization or **[0, 1] normalization** for all datasets, consistent with all baselines)
+  - 4.3 Hyperparams setting (sampling-steps, learning rate schedule, ensemble n_samples etc.)
 
 ## 2025.4.18
     -- all by Claude 3.7 Sonnet Thinking
@@ -57,13 +61,27 @@
 
 ## 2025.5.26
 1. update ensemble + uncertainty quantify/calibration module
+   - [x] update uncertainty quantify/calibration module, confidence levels = [0.5 0.6 0.7 0.8 0.9]
 2. modify crime dataset to support `RF-STPP` framework, i.e. the each `data[2]` is event mark, which is not supported by `RF-STPP` framework now (**此处的Crime dataset来自SMASH仓库，并非DSTPP仓库原有的Crime数据集，务必注意！**)
 3. why CS metric is so bad in Crime for `RF-STPP`? 
 
-## Other detailed settings
-[x] realize the `SinusodialPosEmb` in `RF_Diffusion/RF_Diffusion` - `self.time_mlp`
-[ ] complete abstract + introduction + method_summary in one page
-[x] update uncertainty quantify/calibration module, confidence levels = [0.5 0.6 0.7 0.8 0.9]
+---
+---
+
+# After AAAI'26 Phase 2 Weak Rejection (2025.11)
+
+## 2025.11.24
+1. refer to `SMASH`, rewrite its docstring
+
+### Previous Results Fault with `SMASH`
+2. - [ ] previous STPP results on `SMASH` repo are kinda wrong, because the data processing part is not consistent with `DSTPP` repo, where **event marks' effect should be removed**, need to re-conduct experiments on `SMASH` other than directly using its paper results (**all baselines' real results may be worse than paper results?**)
+3. - [ ] re-conduct experiments on `football` dataset with my `RF-STPP`, with better data processing part (e.g. use 'log' normalization for data which is consistent with `SMASH` repo; **Attention:** `SMASH` use log-normalization for all datasets, ours use [0, 1] normalization for all datasets! Is it unfair for baselines? Need to check if the same normalization method is essential for fair comparison!)
+
+
+
+
+
+---
 
 ## Hyperparams setting
 1. sampling-steps (affect metrics: temporal-rmse & spatial-distance, further affect uncertainty metrics): less more for FM compared with DDPM, to improve computational efficiency (speed)

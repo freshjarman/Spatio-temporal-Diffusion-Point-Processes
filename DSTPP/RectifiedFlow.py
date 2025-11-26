@@ -1,3 +1,31 @@
+"""
+RectifiedFlow.py
+
+This module implements the Rectified Flow framework for the Spatio-temporal Diffusion Point Processes model.
+Rectified Flow is a generative model that learns a transport map between two distributions (e.g., Gaussian noise
+and data distribution) by solving an Ordinary Differential Equation (ODE). It serves as an alternative to
+standard diffusion models, often providing straighter paths and potentially faster sampling.
+
+Key Components:
+- `RectifiedFlow`: The main class managing the training and sampling processes.
+    - **Training**: Implements the loss function (`p_losses`) which minimizes the mean squared error between
+      the predicted velocity and the target velocity (x_data - x_noise).
+    - **Sampling**: Provides methods to generate samples by solving the ODE from noise to data (`sample`, `sample_ode`).
+    - **Likelihood Estimation**: Includes methods to estimate the Negative Log-Likelihood (NLL) using the
+      instantaneous change of variables formula and Hutchinson's trace estimator (`NLL_cal`).
+
+- `ODEFunc`: A helper `nn.Module` defining the system of ODEs for likelihood estimation.
+    - It models the joint evolution of the sample `x` and the log-probability density, allowing for
+      continuous normalizing flow-style likelihood computation.
+
+- Helper Functions:
+    - `divergence_approx`: Implements the Hutchinson Trace Estimator to approximate the divergence of the
+      velocity field, which is required for tracking the change in log-density during ODE solving.
+    - Normalization utilities (`normalize_to_neg_one_to_one`, `unnormalize_to_zero_to_one`).
+
+This implementation supports conditional generation (using `cond`) and handles spatio-temporal data structures.
+"""
+
 import math
 from functools import partial
 from sympy import rf

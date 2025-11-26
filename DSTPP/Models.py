@@ -1,3 +1,35 @@
+"""
+Models.py
+
+This module defines the neural network architectures for the Spatio-temporal Diffusion Point Processes model.
+It primarily implements Transformer-based encoders and sequence-to-sequence models designed to handle
+spatio-temporal event data.
+
+Key Components:
+- Helper Functions:
+    - `get_non_pad_mask`, `get_attn_key_pad_mask`, `get_subsequent_mask`: Utilities for creating attention masks
+      to handle padding and causal masking in sequences.
+
+- Encoder Classes:
+    - `Encoder_ST`: The core Spatio-Temporal Encoder (referencing Section 3.1 of the paper).
+      It processes event locations and times using separate embedding layers and Transformer encoder stacks
+      for temporal, spatial, and joint representations.
+      It utilizes `EncoderLayer` from `DSTPP.Layers`.
+    - `Encoder`: A standard Transformer encoder (marked as NOT USED).
+
+- RNN Layers:
+    - `RNN_layers`: An LSTM-based layer used to capture sequential dependencies on top of the Transformer output.
+
+- Transformer Classes:
+    - `Transformer_ST`: The main Spatio-Temporal Transformer model. It integrates `Encoder_ST` with
+      `RNN_layers` to produce comprehensive embeddings for temporal, spatial, and joint features.
+      The output is a concatenation of these three representations, serving as the conditioning input for the diffusion model.
+    - `Transformer`: A standard Transformer model (marked as NOT USED).
+
+The `Transformer_ST` class is the primary model used for encoding the history of events to condition the
+generation process.
+"""
+
 import math
 import numpy as np
 import torch
@@ -46,8 +78,7 @@ class Encoder(nn.Module):
         self.loc_dim = loc_dim
 
         # position vector, used for temporal encoding
-        self.position_vec = torch.tensor([math.pow(10000.0, 2.0 * (i // 2) / d_model) for i in range(d_model)],
-                                         device=device)
+        self.position_vec = torch.tensor([math.pow(10000.0, 2.0 * (i // 2) / d_model) for i in range(d_model)], device=device)
 
         # event loc embedding
         self.event_emb = nn.Sequential(
@@ -60,15 +91,11 @@ class Encoder(nn.Module):
             nn.Linear(d_model, d_model),
         )
 
-        self.layer_stack = nn.ModuleList([
-            EncoderLayer(d_model, d_inner, n_head, d_k, d_v, dropout=dropout, normalize_before=False)
-            for _ in range(n_layers)
-        ])
+        self.layer_stack = nn.ModuleList(
+            [EncoderLayer(d_model, d_inner, n_head, d_k, d_v, dropout=dropout, normalize_before=False) for _ in range(n_layers)])
 
-        self.layer_stack_temporal = nn.Modulelist([
-            EncoderLayer(d_model, d_inner, n_head, d_k, d_v, dropout=dropout, normalize_before=False)
-            for _ in range(n_layers)
-        ])
+        self.layer_stack_temporal = nn.Modulelist(
+            [EncoderLayer(d_model, d_inner, n_head, d_k, d_v, dropout=dropout, normalize_before=False) for _ in range(n_layers)])
 
     def temporal_enc(self, time, non_pad_mask):
         """
@@ -112,8 +139,7 @@ class Encoder_ST(nn.Module):
         self.loc_dim = loc_dim
 
         # position vector, used for temporal encoding
-        self.position_vec = torch.tensor([math.pow(10000.0, 2.0 * (i // 2) / d_model) for i in range(d_model)],
-                                         device=device)
+        self.position_vec = torch.tensor([math.pow(10000.0, 2.0 * (i // 2) / d_model) for i in range(d_model)], device=device)
 
         # event loc embedding
         self.event_emb_temporal = nn.Sequential(
@@ -136,20 +162,14 @@ class Encoder_ST(nn.Module):
             nn.Linear(d_model, d_model),
         )
 
-        self.layer_stack = nn.ModuleList([
-            EncoderLayer(d_model, d_inner, n_head, d_k, d_v, dropout=dropout, normalize_before=False)
-            for _ in range(n_layers)
-        ])
+        self.layer_stack = nn.ModuleList(
+            [EncoderLayer(d_model, d_inner, n_head, d_k, d_v, dropout=dropout, normalize_before=False) for _ in range(n_layers)])
 
-        self.layer_stack_loc = nn.ModuleList([
-            EncoderLayer(d_model, d_inner, n_head, d_k, d_v, dropout=dropout, normalize_before=False)
-            for _ in range(n_layers)
-        ])
+        self.layer_stack_loc = nn.ModuleList(
+            [EncoderLayer(d_model, d_inner, n_head, d_k, d_v, dropout=dropout, normalize_before=False) for _ in range(n_layers)])
 
-        self.layer_stack_temporal = nn.ModuleList([
-            EncoderLayer(d_model, d_inner, n_head, d_k, d_v, dropout=dropout, normalize_before=False)
-            for _ in range(n_layers)
-        ])
+        self.layer_stack_temporal = nn.ModuleList(
+            [EncoderLayer(d_model, d_inner, n_head, d_k, d_v, dropout=dropout, normalize_before=False) for _ in range(n_layers)])
 
     def temporal_enc(self, time, non_pad_mask):
         """
@@ -182,13 +202,9 @@ class Encoder_ST(nn.Module):
         slf_attn_mask = slf_attn_mask[:, :, :, 0]  # [b x seq_len x seq_len]
 
         for index in range(len(self.layer_stack)):
-            enc_output_loc, _ = self.layer_stack_loc[index](enc_output_loc,
-                                                            non_pad_mask=non_pad_mask,
-                                                            slf_attn_mask=slf_attn_mask)
+            enc_output_loc, _ = self.layer_stack_loc[index](enc_output_loc, non_pad_mask=non_pad_mask, slf_attn_mask=slf_attn_mask)
 
-            enc_output_temporal, _ = self.layer_stack_temporal[index](enc_output_temporal,
-                                                                      non_pad_mask=non_pad_mask,
-                                                                      slf_attn_mask=slf_attn_mask)
+            enc_output_temporal, _ = self.layer_stack_temporal[index](enc_output_temporal, non_pad_mask=non_pad_mask, slf_attn_mask=slf_attn_mask)
 
             enc_output, _ = self.layer_stack[index](enc_output, non_pad_mask=non_pad_mask, slf_attn_mask=slf_attn_mask)
 
@@ -221,17 +237,7 @@ class RNN_layers(nn.Module):
 class Transformer(nn.Module):
     """ A sequence to sequence model with attention mechanism. """
 
-    def __init__(self,
-                 d_model=256,
-                 d_rnn=128,
-                 d_inner=1024,
-                 n_layers=4,
-                 n_head=4,
-                 d_k=64,
-                 d_v=64,
-                 dropout=0.1,
-                 device=None,
-                 loc_dim=2):
+    def __init__(self, d_model=256, d_rnn=128, d_inner=1024, n_layers=4, n_head=4, d_k=64, d_v=64, dropout=0.1, device=None, loc_dim=2):
         super().__init__()
 
         self.encoder = Encoder(d_model=d_model,
@@ -273,18 +279,7 @@ class Transformer(nn.Module):
 class Transformer_ST(nn.Module):
     """ Section 3.1 + RNN: A sequence to sequence model with attention mechanism. """
 
-    def __init__(self,
-                 d_model=256,
-                 d_rnn=128,
-                 d_inner=1024,
-                 n_layers=4,
-                 n_head=4,
-                 d_k=64,
-                 d_v=64,
-                 dropout=0.1,
-                 device=None,
-                 loc_dim=2,
-                 CosSin=False):
+    def __init__(self, d_model=256, d_rnn=128, d_inner=1024, n_layers=4, n_head=4, d_k=64, d_v=64, dropout=0.1, device=None, loc_dim=2, CosSin=False):
         super().__init__()
 
         self.encoder = Encoder_ST(d_model=d_model,
@@ -322,8 +317,7 @@ class Transformer_ST(nn.Module):
         # bsz x seq_len x d_model
         enc_output, enc_output_temporal, enc_output_loc = self.encoder(event_loc, event_time, non_pad_mask)
 
-        assert (enc_output != enc_output_temporal).any() & (enc_output != enc_output_loc).any() & (
-            enc_output_loc != enc_output_temporal).any()
+        assert (enc_output != enc_output_temporal).any() & (enc_output != enc_output_loc).any() & (enc_output_loc != enc_output_temporal).any()
 
         enc_output = self.rnn(enc_output, non_pad_mask)
         enc_output_temporal = self.rnn_temporal(enc_output_temporal, non_pad_mask)

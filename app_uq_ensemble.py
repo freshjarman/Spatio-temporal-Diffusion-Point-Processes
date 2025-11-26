@@ -1,3 +1,38 @@
+"""
+app_uq_ensemble.py
+
+This is the main execution script for the Spatio-temporal Diffusion Point Processes (DSTPP) project,
+enhanced with Uncertainty Quantification (UQ) capabilities.
+
+Key Features:
+- **Model Support**: Supports training and evaluation of both:
+    - Denoising Diffusion Probabilistic Models (DDPM)
+    - Rectified Flow (RF) models
+- **Uncertainty Quantification**: Implements ensemble sampling (`ensemble_sample`) to estimate
+  uncertainty in spatio-temporal predictions.
+- **Dataset Handling**: Loads and processes various datasets (e.g., Earthquake, Citibike, COVID19),
+  normalizes temporal and spatial data into [0, 1] range.
+- **Training & Evaluation**: Contains the complete pipeline for:
+    - Data loading and preprocessing
+    - Model initialization (Transformer-based encoder + Diffusion/RF decoder)
+    - Training loop with loss calculation
+    - Evaluation metrics (NLL, spatial/temporal error, calibration scores)
+
+Usage:
+    Run this script via command line with arguments to specify the dataset, model type, and hyperparameters.
+    Example:
+        python app_uq_ensemble.py --dataset Earthquake --model_type rf --enable_uq --n_ensemble 50
+
+
+Arguments:
+    --dataset: Choice of dataset (e.g., 'Earthquake', 'Crime').
+    --model_type: 'ddpm' or 'rf' (Rectified Flow).
+    --enable_uq: Flag to enable uncertainty quantification evaluation.
+    --n_ensemble: Number of ensemble samples for UQ.
+    --mode: 'train' or 'test'.
+    ... (see get_args() for full list)
+"""
+
 import torch
 import torch.nn as nn
 import numpy as np

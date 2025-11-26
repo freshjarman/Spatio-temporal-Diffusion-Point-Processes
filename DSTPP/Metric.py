@@ -38,9 +38,9 @@ def time_intervals(t, target_levels):
             left_idx = np.where(cumulative >= 0)[0][0]
             right_idx = np.where(cumulative >= min(max(cumulative), (target)))[0][0]
 
-            intervals.append((0, x[right_idx]))
+            intervals.append((0, x[right_idx]))  # SMASH中设置t-intervals的左端点为0
 
-        return intervals  # Find credible intervals for 68% and 95% levels
+        return intervals
 
     intervals = find_credible_intervals(x, t_pdf_values, target_levels)
     return intervals, t_pdf, x, t_pdf_values

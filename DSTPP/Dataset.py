@@ -1,3 +1,28 @@
+"""
+Dataset.py
+
+This module defines the PyTorch Dataset classes and collation functions for handling event stream data
+in the Spatio-temporal Diffusion Point Processes model. It supports datasets with different spatial
+dimensions (1D, 2D, and 3D).
+
+Key Components:
+- Dataset Classes:
+    - `EventData`: Standard dataset for 2D spatial events (Longitude, Latitude).
+      Expects input data as a list of event streams, where each stream contains [time, d_t_norm, lng, lat].
+    - `EventData_3D`: Dataset for 3D spatial events (Longitude, Latitude, Height/Depth).
+      Expects input data as [time, d_t_norm, lng, lat, height].
+    - `EventData_1D`: Dataset for 1D spatial events (e.g., just Longitude or a single dimension).
+      Expects input data as [time, d_t_norm, lng].
+- Helper Functions:
+    - `pad_time`: Pads a batch of sequences to the maximum sequence length in that batch using a padding constant.
+    - `collate_fn`: Collate function for `EventData` (2D), preparing batches of (time, d_t_norm, lng, lat).
+    - `collate_fn_3d`: Collate function for `EventData_3D`.
+    - `collate_fn_1d`: Collate function for `EventData_1D`.
+
+These classes ensure that variable-length event sequences are properly formatted, padded, and converted
+to PyTorch tensors for model training and evaluation.
+"""
+
 import numpy as np
 import torch
 import torch.utils.data
@@ -86,7 +111,7 @@ def pad_time(insts):
 
 
 def collate_fn(insts):
-    """ Collate function, as required by PyTorch. """
+    """ Collate function, as required by PyTorch. Pad sequences to the same length. """
 
     time, time_norm, lng, lat = list(zip(*insts))
     time = pad_time(time)

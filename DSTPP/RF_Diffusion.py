@@ -1,3 +1,26 @@
+"""
+RF_Diffusion.py
+
+This module defines the neural network architecture for the Rectified Flow (RF) model in the
+Spatio-temporal Diffusion Point Processes framework. It serves as the velocity field estimator ($v_\theta$)
+that predicts the direction of flow from the noise distribution to the data distribution.
+
+Key Components:
+- `RF_Diffusion`: The main neural network class.
+    - **Architecture**: It employs a co-attention mechanism similar to `ST_Diffusion` to process spatial
+      and temporal components of the event data separately and then fuse them.
+    - **Inputs**: Takes the current state `x` (concatenated time and location), time step `t`, and
+      conditioning information `cond` (from the Transformer encoder).
+    - **Outputs**: Predicts the velocity vector for both temporal and spatial dimensions.
+    - **Conditioning**: Integrates historical event information via the `cond` input, which modulates
+      the feature representations at multiple layers.
+
+- `SinusoidalPosEmb`: A helper class for generating sinusoidal positional embeddings for the time step `t`.
+
+This network is trained to minimize the difference between the predicted velocity and the straight-line
+path velocity ($X_1 - X_0$) in the Rectified Flow framework.
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
