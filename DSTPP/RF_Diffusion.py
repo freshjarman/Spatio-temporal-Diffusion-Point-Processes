@@ -1,5 +1,5 @@
 """
-RF_Diffusion.py
+RF_Diffusion.py -> co-attention network for velocity field estimator in Rectified Flow model
 
 This module defines the neural network architecture for the Rectified Flow (RF) model in the
 Spatio-temporal Diffusion Point Processes framework. It serves as the velocity field estimator ($v_\theta$)
@@ -59,8 +59,7 @@ class RF_Diffusion(nn.Module):
         sinu_pos_emb = SinusoidalPosEmb(num_units)
         fourier_dim = num_units
         time_dim = num_units
-        self.time_mlp = nn.Sequential(sinu_pos_emb, nn.Linear(fourier_dim, time_dim), nn.GELU(),
-                                      nn.Linear(time_dim, time_dim))
+        self.time_mlp = nn.Sequential(sinu_pos_emb, nn.Linear(fourier_dim, time_dim), nn.GELU(), nn.Linear(time_dim, time_dim))
 
         # 处理空间维度的网络
         self.linears_spatial = nn.ModuleList([
@@ -89,27 +88,17 @@ class RF_Diffusion(nn.Module):
         self.output_temporal = nn.Sequential(nn.Linear(num_units, num_units), nn.ReLU(), nn.Linear(num_units, 1))
 
         # 注意力权重网络 - 学习如何组合时间和空间信息
-        self.linear_t = nn.Sequential(nn.Linear(num_units * 2, num_units), nn.ReLU(), nn.Linear(num_units, num_units),
-                                      nn.ReLU(), nn.Linear(num_units, 2))
-        self.linear_s = nn.Sequential(nn.Linear(num_units * 2, num_units), nn.ReLU(), nn.Linear(num_units, num_units),
-                                      nn.ReLU(), nn.Linear(num_units, 2))
+        self.linear_t = nn.Sequential(nn.Linear(num_units * 2, num_units), nn.ReLU(), nn.Linear(num_units, num_units), nn.ReLU(),
+                                      nn.Linear(num_units, 2))
+        self.linear_s = nn.Sequential(nn.Linear(num_units * 2, num_units), nn.ReLU(), nn.Linear(num_units, num_units), nn.ReLU(),
+                                      nn.Linear(num_units, 2))
 
         # 条件编码网络
         if condition:
-            self.cond_all = nn.Sequential(nn.Linear(cond_dim * 3, num_units), nn.ReLU(),
-                                          nn.Linear(num_units, num_units))
-            self.cond_temporal = nn.ModuleList(
-                [nn.Linear(cond_dim, num_units),
-                 nn.Linear(cond_dim, num_units),
-                 nn.Linear(cond_dim, num_units)])
-            self.cond_spatial = nn.ModuleList(
-                [nn.Linear(cond_dim, num_units),
-                 nn.Linear(cond_dim, num_units),
-                 nn.Linear(cond_dim, num_units)])
-            self.cond_joint = nn.ModuleList(
-                [nn.Linear(cond_dim, num_units),
-                 nn.Linear(cond_dim, num_units),
-                 nn.Linear(cond_dim, num_units)])
+            self.cond_all = nn.Sequential(nn.Linear(cond_dim * 3, num_units), nn.ReLU(), nn.Linear(num_units, num_units))
+            self.cond_temporal = nn.ModuleList([nn.Linear(cond_dim, num_units), nn.Linear(cond_dim, num_units), nn.Linear(cond_dim, num_units)])
+            self.cond_spatial = nn.ModuleList([nn.Linear(cond_dim, num_units), nn.Linear(cond_dim, num_units), nn.Linear(cond_dim, num_units)])
+            self.cond_joint = nn.ModuleList([nn.Linear(cond_dim, num_units), nn.Linear(cond_dim, num_units), nn.Linear(cond_dim, num_units)])
 
     def get_attn(self, x, t, x_self_cond=None, cond=None):
         """获取注意力权重"""
@@ -117,8 +106,7 @@ class RF_Diffusion(nn.Module):
 
         if self.condition:
             hidden_dim = int(cond.shape[-1] / 3)
-            cond_temporal, cond_spatial, cond_joint = (cond[:, :, :hidden_dim], cond[:, :, hidden_dim:2 * hidden_dim],
-                                                       cond[:, :, 2 * hidden_dim:])
+            cond_temporal, cond_spatial, cond_joint = (cond[:, :, :hidden_dim], cond[:, :, hidden_dim:2 * hidden_dim], cond[:, :, 2 * hidden_dim:])
             cond = self.cond_all(cond)
         else:
             cond = torch.zeros_like(x_spatial)
@@ -148,8 +136,7 @@ class RF_Diffusion(nn.Module):
         # 条件处理
         if self.condition and cond is not None:
             hidden_dim = int(cond.shape[-1] / 3)
-            cond_temporal, cond_spatial, cond_joint = (cond[:, :, :hidden_dim], cond[:, :, hidden_dim:2 * hidden_dim],
-                                                       cond[:, :, 2 * hidden_dim:])
+            cond_temporal, cond_spatial, cond_joint = (cond[:, :, :hidden_dim], cond[:, :, hidden_dim:2 * hidden_dim], cond[:, :, 2 * hidden_dim:])
             cond = self.cond_all(cond)  # [batch_size, 1, num_units]
         else:
             cond = torch.zeros((x.shape[0], 1, self.linears_spatial[0].out_features), device=x.device)

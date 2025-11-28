@@ -1,3 +1,33 @@
+"""
+app_uq_ensemble_test.py - Dedicated Testing Script with Quality-Filtered Ensemble
+
+This is the TESTING script for post-training evaluation with quality-filtered ensemble.
+For training, use `app_uq_ensemble.py`.
+
+Pipeline Overview:
+    1. Training Phase (app_uq_ensemble.py): Train model, save checkpoints every 10 epochs
+    2. Model Selection: Manually select main model and auxiliary models from saved checkpoints
+    3. Testing Phase (this script): Load selected models, apply quality-filtered ensemble
+
+Key Features:
+    - Supports both naive ensemble and quality-filtered ensemble
+    - Uses multiple auxiliary models for noise quality evaluation
+    - Entropy-based filtering and inverse-entropy weighting
+    - Runs 10 times for statistical analysis (mean ± std)
+
+Usage:
+    # Naive ensemble (default)
+    python app_uq_ensemble_test.py --dataset Earthquake --n_ensemble 50
+
+    # Quality-filtered ensemble
+    python app_uq_ensemble_test.py --dataset Earthquake --n_ensemble 50 \\
+        --enable_filtered_ensemble \\
+        --aux_model_dir ./ModelSave/dataset_Earthquake_timesteps_1000_xxx/ \\
+        --aux_model_epochs "100,150,200,250"
+
+        # PS: aux-models 思考可以选一次选连的不同epoch对应的models，也可以尝试选择不同seed训练的models
+"""
+
 import torch
 import torch.nn as nn
 import numpy as np
@@ -20,10 +50,15 @@ import random
 import json
 import datetime
 
+# Import model utilities and enhanced ensemble functions
+from DSTPP.model_utils import create_model, load_model, load_multiple_models, find_model_checkpoints, parse_epochs_string
+from gu_ensemble import quality_filtered_ensemble
+
 
 def ensemble_sample(model, batch_size, cond, n_samples=100, dim=2):
     """
-    Perform ensemble sampling with multiple samples for uncertainty quantification
+    Perform naive ensemble sampling with uniform weights.
+    Returns weights for consistency with enhanced ensemble.
     """
     sampled_temporal_all = []
     sampled_spatial_all = []
@@ -33,7 +68,9 @@ def ensemble_sample(model, batch_size, cond, n_samples=100, dim=2):
         sampled_temporal_all.append(sampled_seq[:, 0, :1])  # temporal component
         sampled_spatial_all.append(sampled_seq[:, 0, -dim:])  # spatial component
 
-    return sampled_temporal_all, sampled_spatial_all
+    # Uniform weights for naive ensemble
+    weights = torch.ones(n_samples) / n_samples
+    return sampled_temporal_all, sampled_spatial_all, weights
 
 
 def setup_init(args):
@@ -85,6 +122,14 @@ def get_args():
     parser.add_argument('--n_ensemble', type=int, default=5, help='ensemble采样数量')
     # cpu核数
     parser.add_argument('--cpu_num', type=int, default=6, help='CPU核数')
+
+    # Enhanced ensemble arguments (quality-filtered ensemble)
+    parser.add_argument('--enable_filtered_ensemble', action='store_true', help='启用quality-filtered ensemble（需要多个辅助模型）')
+    parser.add_argument('--aux_model_dir', type=str, default=None, help='Directory containing auxiliary model checkpoints')
+    parser.add_argument('--aux_model_epochs', type=str, default=None, help='Comma-separated epochs to load, e.g., "100,120,140"')
+    parser.add_argument('--filter_ratio', type=float, default=0.2, help='Ratio of low-quality noises to filter out')
+    parser.add_argument('--use_weighting', action='store_true', default=True, help='Use inverse-entropy weighting for ensemble')
+
     args = parser.parse_args()
     args.cuda = torch.cuda.is_available()
     return args
@@ -183,59 +228,52 @@ def LR_warmup(lr, epoch_num, epoch_current):
 
 if __name__ == "__main__":
     setup_init(opt)
-    setproctitle.setproctitle("RF-STPP-UQ")
+    setproctitle.setproctitle("RF-STPP-UQ-Test")
 
     print('dataset:{}'.format(opt.dataset))
+    print('mode:', opt.mode)
+    print('enable_filtered_ensemble:', opt.enable_filtered_ensemble)
+
+    # Model path configuration
     MODEL_PATH = './ModelSave/dataset_Earthquake_timesteps_1000_2025-06-09-10h/model_280.pkl'
     # MODEL_PATH = './ModelSave/dataset_Earthquake_timesteps_50_2025-05-27-09h/model_140.pkl'
     # MODEL_PATH = './ModelSave/dataset_Crime_timesteps_50_2025-05-27-09h/model_190.pkl'
-    # MODEL_PATH = './ModelSave/dataset_Football_timesteps_500_2025-06-09-10h/model_1220.pkl'  # 1230
+    # MODEL_PATH = './ModelSave/dataset_Football_timesteps_500_2025-06-09-10h/model_1220.pkl'
 
-    # Spatio-temporal Encoder
-    transformer = Transformer_ST(d_model=64,
-                                 d_rnn=256,
-                                 d_inner=128,
-                                 n_layers=4,
-                                 n_head=4,
-                                 d_k=16,
-                                 d_v=16,
-                                 dropout=0.1,
-                                 device=device,
-                                 loc_dim=opt.dim,
-                                 CosSin=True).to(device)
-
-    if opt.model_type == 'ddpm':
-        # 原有DDPM模型创建代码
-        model = ST_Diffusion(n_steps=opt.timesteps, dim=1 + opt.dim, condition=True, cond_dim=64).to(device)
-        diffusion = GaussianDiffusion_ST(model,
-                                         loss_type=opt.loss_type,
-                                         seq_length=1 + opt.dim,
-                                         timesteps=opt.timesteps,
-                                         sampling_timesteps=opt.samplingsteps,
-                                         objective=opt.objective,
-                                         beta_schedule=opt.beta_schedule).to(device)
-        Model = Model_all(transformer, diffusion)
-    elif opt.model_type == 'rf':
-        # 新的Rectified Flow模型创建代码
-        model = RF_Diffusion(n_steps=opt.timesteps, dim=1 + opt.dim, condition=True, cond_dim=64).to(device)
-        rf = RectifiedFlow(model, loss_type=opt.loss_type, seq_length=1 + opt.dim, timesteps=opt.timesteps,
-                           sampling_timesteps=opt.samplingsteps).to(device)
-        Model = RF_Model_all(transformer, rf)
-    else:
-        raise ValueError("Unsupported model type: {}".format(opt.model_type))
-
+    # ============ Model Creation (using utility function) ============
+    Model = create_model(opt, device)
     print("Model created successfully!")
 
+    # ============ Load Main Model ============
     if opt.mode == 'test':
         model_path = MODEL_PATH
         if not os.path.exists(model_path):
             raise FileNotFoundError("Model path does not exist: {}".format(model_path))
         print("Loading model from:", model_path)
         Model.load_state_dict(torch.load(model_path, map_location=device))
+        Model.to(device)
+        Model.eval()
         print("Model loaded successfully!")
     else:
-        print("Training mode, no model loading.")
-    Model.to(device)
+        # 报错提示仅支持测试模式并退出
+        raise RuntimeError("Only test mode is supported. Exiting.")
+        # Model.to(device)
+
+    # ============ Load Auxiliary Models for Enhanced Ensemble ============
+    auxiliary_models = None
+    if opt.enable_filtered_ensemble and opt.aux_model_dir is not None:
+        print("Loading auxiliary models for quality-filtered ensemble...")
+        epochs = parse_epochs_string(opt.aux_model_epochs)
+        try:
+            checkpoint_paths = find_model_checkpoints(opt.aux_model_dir, epochs)
+            if len(checkpoint_paths) >= 2:
+                # load_multiple_models 内部已经处理 device 和 eval 模式
+                auxiliary_models = load_multiple_models(opt, device, checkpoint_paths)
+                print(f"Enhanced ensemble enabled with {len(auxiliary_models)} auxiliary models.")
+            else:
+                print("Warning: Less than 2 auxiliary models. Falling back to naive ensemble.")
+        except FileNotFoundError as e:
+            print(f"Warning: {e}. Falling back to naive ensemble.")
 
     trainloader, testloader, valloader, (MAX, MIN) = data_loader()
     print("Data loaded successfully!")
@@ -278,8 +316,26 @@ if __name__ == "__main__":
                 event_time_non_mask, event_loc_non_mask, enc_out_non_mask = Batch2toModel(batch, Model.transformer)
 
                 # Ensemble sampling for UQ
-                sampled_temporal_all, sampled_spatial_all = ensemble_sample(Model, event_time_non_mask.shape[0], enc_out_non_mask, opt.n_ensemble,
-                                                                            opt.dim)
+                # 根据是否启用质量过滤ensemble选择不同的采样策略
+                if opt.enable_filtered_ensemble and auxiliary_models:
+                    # 使用质量过滤的ensemble (需要多个模型)
+                    sampled_temporal_all, sampled_spatial_all, ensemble_weights = quality_filtered_ensemble(model=Model,
+                                                                                                            auxiliary_models=auxiliary_models,
+                                                                                                            batch_size=event_time_non_mask.shape[0],
+                                                                                                            cond=enc_out_non_mask,
+                                                                                                            n_noises=opt.n_ensemble,
+                                                                                                            dim=opt.dim,
+                                                                                                            filter_ratio=opt.filter_ratio,
+                                                                                                            use_weighting=opt.use_weighting,
+                                                                                                            device=device)
+                    # 注意: 过滤后 ensemble_weights 长度可能小于 n_ensemble
+                    n_kept = len(sampled_temporal_all)
+                    if run_idx == 0:  # 只在第一次运行时打印
+                        print(f"  [Filtered Ensemble] Kept {n_kept} / {opt.n_ensemble} samples after quality filtering")
+                else:
+                    # 使用朴素ensemble (单模型多次采样)
+                    sampled_temporal_all, sampled_spatial_all, ensemble_weights = ensemble_sample(Model, event_time_non_mask.shape[0],
+                                                                                                  enc_out_non_mask, opt.n_ensemble, opt.dim)
 
                 # Single sample for basic metrics
                 # sampled_seq = Model.diffusion.sample(batch_size=event_time_non_mask.shape[0], cond=enc_out_non_mask)
@@ -315,9 +371,20 @@ if __name__ == "__main__":
                 # total_num += gen.shape[0]
 
                 # Basic metrics - 使用ensemble集成结果
-                # 计算ensemble预测的均值作为最终预测，预期：ensemble的均值预测通常比单次采样更稳定和准确
-                ensemble_temporal_mean = torch.stack(sampled_temporal_all, dim=0).mean(dim=0)  # [n_ensemble, bsz, 1]
-                ensemble_spatial_mean = torch.stack(sampled_spatial_all, dim=0).mean(dim=0)  # [n_ensemble, bsz, dim]
+                # 计算ensemble预测的加权均值作为最终预测，预期：ensemble的加权均值预测通常比单次采样更稳定和准确
+                temporal_stack = torch.stack(sampled_temporal_all, dim=0)  # [n_filtered, bsz, 1]
+                spatial_stack = torch.stack(sampled_spatial_all, dim=0)  # [n_filtered, bsz, dim]
+
+                # 使用ensemble权重进行加权平均
+                # 注意: ensemble_weights 可能是 torch.Tensor 或 list，需要统一处理
+                if isinstance(ensemble_weights, torch.Tensor):
+                    weights_tensor = ensemble_weights.to(device=temporal_stack.device, dtype=temporal_stack.dtype)
+                else:
+                    weights_tensor = torch.tensor(ensemble_weights, device=temporal_stack.device, dtype=temporal_stack.dtype)
+                weights_tensor = weights_tensor.view(-1, 1, 1)  # [n_filtered, 1, 1]
+
+                ensemble_temporal_mean = (temporal_stack * weights_tensor).sum(dim=0)  # [bsz, 1]
+                ensemble_spatial_mean = (spatial_stack * weights_tensor).sum(dim=0)  # [bsz, dim]
 
                 # Temporal metrics
                 real_time_gt = (event_time_non_mask[:, 0, :].detach().cpu()) * (MAX[1] - MIN[1]) + MIN[1]
@@ -335,7 +402,9 @@ if __name__ == "__main__":
                 total_num += gen_temporal.shape[0]
 
                 # UQ evaluation: calculate calibration scores
-                if opt.n_ensemble >= 10:  # Only perform UQ evaluation if ensemble size is sufficient
+                # 使用实际保留的样本数量进行判断（过滤后可能减少）
+                actual_n_samples = len(sampled_temporal_all)
+                if actual_n_samples >= 10:  # Only perform UQ evaluation if ensemble size is sufficient
                     sampled_temporal_denorm = []
                     sampled_spatial_denorm = []
 

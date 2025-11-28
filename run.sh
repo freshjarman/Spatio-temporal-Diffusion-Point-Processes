@@ -10,7 +10,7 @@ python app.py --dataset Citybikes --mode train --timesteps 500 --samplingsteps 5
 python app.py --dataset Independent --mode train --timesteps 500 --samplingsteps 500 --batch_size 128 --cuda_id 0 --total_epochs 2000 
 
 # import os
-# os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+# os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"  # WIN 上解决 "OMP: Error #15: Initializing libiomp5md.dll, but found libiomp5md.dll already initialized." 错误 （ODE计算导致的）
 $env:KMP_DUPLICATE_LIB_OK="TRUE"; python app_uq_ensemble.py --dataset Earthquake --mode train --model_type rf --enable_uq --n_ensemble 10 --timesteps 500 --samplingsteps 50 --batch_size 256 --total_epochs 800 --lr 5e-4 --cuda_id 0 
 # --timesteps 必须对应正确
 $env:KMP_DUPLICATE_LIB_OK="TRUE"; python app_uq_ensemble_test.py --dataset Earthquake --mode test --model_type rf --timesteps 1000 --n_ensemble 100 --samplingsteps 50 --batch_size 64 --cuda_id 0

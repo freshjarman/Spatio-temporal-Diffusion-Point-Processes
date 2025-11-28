@@ -244,7 +244,7 @@ class RectifiedFlow(nn.Module):
         return loss, loss_temporal, loss_spatial
 
     @torch.no_grad()
-    def sample(self, batch_size=16, cond=None, steps=None, euler_only=False):
+    def sample(self, batch_size=16, cond=None, steps=None, euler_only=False, noise=None):
         """
         从噪声采样生成数据
         使用预测的速度场进行指导
@@ -254,13 +254,17 @@ class RectifiedFlow(nn.Module):
             cond: 条件信息
             steps: 采样步数，默认使用初始化时指定的步数
             euler_only: 是否只使用欧拉法 (一阶)，默认False使用Heun法 (二阶)
+            noise: 可选的初始噪声张量 [batch_size, channels, seq_length]，如果为None则随机生成
         """
         device = next(self.parameters()).device
         steps = default(steps, self.sampling_timesteps)
 
-        # 从标准高斯分布开始
+        # 从标准高斯分布开始，或使用提供的噪声
         shape = (batch_size, self.channels, self.seq_length)
-        x = torch.randn(shape, device=device)
+        if noise is None:
+            x = torch.randn(shape, device=device)
+        else:
+            x = noise.to(device)
 
         # 时间步长
         step_size = 1.0 / steps
@@ -294,7 +298,6 @@ class RectifiedFlow(nn.Module):
         # 归一化到[0,1]
         x = unnormalize_to_zero_to_one(x)
         return x  # [bsz, 1, dim] (1 + loc_dim)
-
 
     @torch.no_grad()
     def calculate_neg_log_likelihood(self, x_start, cond=None, rtol=1e-5, atol=1e-5, method='dopri5'):

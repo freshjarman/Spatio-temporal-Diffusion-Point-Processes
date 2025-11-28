@@ -33,6 +33,8 @@ Arguments:
     ... (see get_args() for full list)
 """
 
+# FIXME: 待改正——应该只有mode为'test'时，才需要加载多个辅助模型进行quality-filtered ensemble；train时使用naive ensemble即可
+
 import torch
 import torch.nn as nn
 import numpy as np
@@ -55,10 +57,25 @@ import random
 import json
 import datetime
 
+# Import model utilities
+from DSTPP.model_utils import create_model
+
 
 def ensemble_sample(model, batch_size, cond, n_samples=100, dim=2):
     """
-    Perform ensemble sampling with multiple samples for uncertainty quantification
+    Perform naive ensemble sampling for uncertainty quantification during training.
+    
+    Args:
+        model: The trained model (RF_Model_all or Model_all)
+        batch_size: Number of samples in a batch
+        cond: Conditioning information from the transformer encoder
+        n_samples: Number of ensemble samples
+        dim: Spatial dimension (1, 2, or 3)
+    
+    Returns:
+        sampled_temporal_all: List of temporal predictions
+        sampled_spatial_all: List of spatial predictions
+        weights: Uniform weights [n_samples]
     """
     sampled_temporal_all = []
     sampled_spatial_all = []
@@ -68,7 +85,9 @@ def ensemble_sample(model, batch_size, cond, n_samples=100, dim=2):
         sampled_temporal_all.append(sampled_seq[:, 0, :1])  # temporal component
         sampled_spatial_all.append(sampled_seq[:, 0, -dim:])  # spatial component
 
-    return sampled_temporal_all, sampled_spatial_all
+    # Uniform weights for naive ensemble
+    weights = torch.ones(n_samples) / n_samples
+    return sampled_temporal_all, sampled_spatial_all, weights
 
 
 def setup_init(args):
@@ -120,6 +139,7 @@ def get_args():
     parser.add_argument('--n_ensemble', type=int, default=5, help='ensemble采样数量')
     # cpu核数
     parser.add_argument('--cpu_num', type=int, default=6, help='CPU核数')
+
     args = parser.parse_args()
     args.cuda = torch.cuda.is_available()
     return args
@@ -239,52 +259,8 @@ if __name__ == "__main__":
 
     writer = SummaryWriter(log_dir=logdir, flush_secs=5)
 
-    # Spatio-temporal Encoder
-    transformer = Transformer_ST(d_model=64,
-                                 d_rnn=256,
-                                 d_inner=128,
-                                 n_layers=4,
-                                 n_head=4,
-                                 d_k=16,
-                                 d_v=16,
-                                 dropout=0.1,
-                                 device=device,
-                                 loc_dim=opt.dim,
-                                 CosSin=True).to(device)
-
-    if opt.model_type == 'ddpm':
-        # 原有DDPM模型创建代码
-        model = ST_Diffusion(n_steps=opt.timesteps, dim=1 + opt.dim, condition=True, cond_dim=64).to(device)
-        diffusion = GaussianDiffusion_ST(model,
-                                         loss_type=opt.loss_type,
-                                         seq_length=1 + opt.dim,
-                                         timesteps=opt.timesteps,
-                                         sampling_timesteps=opt.samplingsteps,
-                                         objective=opt.objective,
-                                         beta_schedule=opt.beta_schedule).to(device)
-        Model = Model_all(transformer, diffusion)
-    elif opt.model_type == 'rf':
-        # 新的Rectified Flow模型创建代码
-        model = RF_Diffusion(n_steps=opt.timesteps, dim=1 + opt.dim, condition=True, cond_dim=64).to(device)
-        rf = RectifiedFlow(model, loss_type=opt.loss_type, seq_length=1 + opt.dim, timesteps=opt.timesteps,
-                           sampling_timesteps=opt.samplingsteps).to(device)
-        Model = RF_Model_all(transformer, rf)
-    else:
-        raise ValueError("Unsupported model type: {}".format(opt.model_type))
-
+    Model = create_model(opt, device)  # 根据opt.model_type创建模型rf或ddpm
     print("Model created successfully!")
-
-    # TODO: ADD Model loading if exists for further testing programs
-    # if opt.mode == 'test':
-    #     model_path = './ModelSave/dataset_{}_timesteps_{}/'.format(opt.dataset, opt.timesteps)
-    #     if not os.path.exists(model_path):
-    #         raise FileNotFoundError("Model path does not exist: {}".format(model_path))
-    #     print("Loading model from:", model_path)
-    #     Model.load_state_dict(torch.load(model_path + 'model_{}.pkl'.format(opt.total_epochs - 1), map_location=device))
-    #     print("Model loaded successfully!")
-    # else:
-    #     print("Training mode, no model loading.")
-    # Model.to(device)
 
     trainloader, testloader, valloader, (MAX, MIN) = data_loader(writer)
     print("Data loaded successfully!")
@@ -302,7 +278,8 @@ if __name__ == "__main__":
             with torch.no_grad():
                 Model.eval()
 
-                # Validation set evaluation
+                # Validation set evaluation =================================================
+
                 print('Validation evaluation!')
                 loss_test_all = 0.0
                 mae_temporal, rmse_temporal, mae_spatial, total_num = 0.0, 0.0, 0.0, 0.0
@@ -314,19 +291,6 @@ if __name__ == "__main__":
                     sampled_seq = Model.diffusion.sample(batch_size=event_time_non_mask.shape[0], cond=enc_out_non_mask)
 
                     loss = Model.diffusion(torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
-
-                    # Unnecessary in dev-set: Calculate the negative log likelihood (NLL) for validation
-
-                    # if opt.model_type == 'ddpm':
-                    #     vb, vb_temporal, vb_spatial = Model.diffusion.NLL_cal(
-                    #         torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
-                    # else:
-                    #     vb, vb_temporal, vb_spatial = Model.diffusion.calculate_neg_log_likelihood(
-                    #         torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
-
-                    # vb_test_all += vb
-                    # vb_test_temporal_all += vb_temporal
-                    # vb_test_spatial_all += vb_spatial
                     loss_test_all += loss.item() * event_time_non_mask.shape[0]
                     # Temporal
                     real = (event_time_non_mask[:, 0, :].detach().cpu()) * (MAX[1] - MIN[1]) + MIN[1]
@@ -341,11 +305,9 @@ if __name__ == "__main__":
                     mae_spatial += torch.sqrt(torch.sum((real - gen)**2, dim=-1)).sum().item()
 
                     total_num += gen.shape[0]
-
-                # TODO: Check if the logic and patience is suitable for early stopping?
                 if loss_test_all > min_loss_test:
                     early_stop += 1
-                    if early_stop >= 200:
+                    if early_stop >= 200:  # TODO: Check if the logic and patience is suitable for early stopping?
                         break
                 else:
                     early_stop = 0
@@ -359,6 +321,8 @@ if __name__ == "__main__":
                 writer.add_scalar(tag='Evaluation/mae_temporal_val', scalar_value=mae_temporal / total_num, global_step=itr)
                 writer.add_scalar(tag='Evaluation/rmse_temporal_val', scalar_value=np.sqrt(rmse_temporal / total_num), global_step=itr)
                 writer.add_scalar(tag='Evaluation/distance_spatial_val', scalar_value=mae_spatial / total_num, global_step=itr)
+
+                # Test set evaluation =================================================
 
                 print('TEST set evaluation with UQ!')
                 # Test set evaluation with UQ
@@ -376,19 +340,17 @@ if __name__ == "__main__":
                     for batch in testloader:
                         event_time_non_mask, event_loc_non_mask, enc_out_non_mask = Batch2toModel(batch, Model.transformer)
 
-                        # Ensemble sampling for UQ
-                        sampled_temporal_all, sampled_spatial_all = ensemble_sample(Model, event_time_non_mask.shape[0], enc_out_non_mask,
-                                                                                    opt.n_ensemble, opt.dim)
-
-                        # Single sample for basic metrics
-                        sampled_seq = Model.diffusion.sample(batch_size=event_time_non_mask.shape[0], cond=enc_out_non_mask)
+                        # Naive ensemble sampling for UQ (training-time validation)
+                        sampled_temporal_all, sampled_spatial_all, ensemble_weights = ensemble_sample(Model, event_time_non_mask.shape[0],
+                                                                                                      enc_out_non_mask, opt.n_ensemble, opt.dim)
 
                         loss = Model.diffusion(torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
 
+                        # Calculate NLL for test set
                         if opt.model_type == 'ddpm':
                             vb, vb_temporal, vb_spatial = Model.diffusion.NLL_cal(torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1),
                                                                                   enc_out_non_mask)
-                        else:
+                        else:  # flow matching
                             vb, vb_temporal, vb_spatial = Model.diffusion.calculate_neg_log_likelihood(
                                 torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
 
@@ -397,24 +359,27 @@ if __name__ == "__main__":
                         vb_test_spatial_all += vb_spatial
                         loss_test_all += loss.item() * event_time_non_mask.shape[0]
 
-                        # # Basic metrics - 使用单词预测结果
+                        # Single sample for basic metrics [NOT USED in UQ evaluation]
+                        # sampled_seq = Model.diffusion.sample(batch_size=event_time_non_mask.shape[0], cond=enc_out_non_mask)
+                        # # Basic metrics - 使用单次预测结果
                         # real = (event_time_non_mask[:, 0, :].detach().cpu()) * (MAX[1] - MIN[1]) + MIN[1]
                         # gen = (sampled_seq[:, 0, :1].detach().cpu()) * (MAX[1] - MIN[1]) + MIN[1]
                         # mae_temporal += torch.abs(real - gen).sum().item()
                         # rmse_temporal += ((real - gen)**2).sum().item()
-
                         # real = event_loc_non_mask[:, 0, :].detach().cpu()
                         # real = real * (torch.tensor([MAX[2:]]) - torch.tensor([MIN[2:]])) + torch.tensor([MIN[2:]])
                         # gen = sampled_seq[:, 0, -opt.dim:].detach().cpu()
                         # gen = gen * (torch.tensor([MAX[2:]]) - torch.tensor([MIN[2:]])) + torch.tensor([MIN[2:]])
                         # mae_spatial += torch.sqrt(torch.sum((real - gen)**2, dim=-1)).sum().item()
-
                         # total_num += gen.shape[0]
 
-                        # Basic metrics - 使用ensemble集成结果
-                        # 计算ensemble预测的均值作为最终预测，预期：ensemble的均值预测通常比单次采样更稳定和准确
-                        ensemble_temporal_mean = torch.stack(sampled_temporal_all, dim=0).mean(dim=0)  # [bsz, 1]
-                        ensemble_spatial_mean = torch.stack(sampled_spatial_all, dim=0).mean(dim=0)  # [bsz, dim]
+                        # Basic metrics - 使用ensemble集成结果（支持加权平均）
+                        # 计算ensemble预测的加权均值作为最终预测；ensemble_weights: [n_samples], 权重和为1
+                        stacked_temporal = torch.stack(sampled_temporal_all, dim=0)  # [n_samples, bsz, 1]
+                        stacked_spatial = torch.stack(sampled_spatial_all, dim=0)  # [n_samples, bsz, dim]
+                        weights_view = ensemble_weights.view(-1, 1, 1).to(stacked_temporal.device)
+                        ensemble_temporal_mean = (stacked_temporal * weights_view).sum(dim=0)  # [bsz, 1]
+                        ensemble_spatial_mean = (stacked_spatial * weights_view).sum(dim=0)  # [bsz, dim]
 
                         # Temporal metrics
                         real_time_gt = (event_time_non_mask[:, 0, :].detach().cpu()) * (MAX[1] - MIN[1]) + MIN[1]
@@ -447,11 +412,11 @@ if __name__ == "__main__":
                         calibration_score = get_calibration_score(
                             sampled_temporal_denorm,
                             sampled_spatial_denorm,
-                            None,  # No marks in DSTPP Task
+                            None,  # TODO: No marks in DSTPP Task now
                             real_time_gt,
                             real_loc_gt,
                             target_levels=target_levels,
-                            model='DSTPP')
+                            model='DSTPP')  # SMASH中, `model`控制ece计算方式 (mark probs or samples众数)
 
                         cs_time_all += calibration_score[0]
                         cs_loc_all += calibration_score[1]
@@ -493,6 +458,8 @@ if __name__ == "__main__":
                         writer.add_scalar(tag=f'UQ/calibration_time_{level:.1f}', scalar_value=cs2_time_all[i].item(), global_step=itr)
                         writer.add_scalar(tag=f'UQ/calibration_loc_{level:.1f}', scalar_value=cs2_loc_all[i].item(), global_step=itr)
 
+        # Training ================================================================
+
         # TODO: Learning rate scheduling
         lr_init = opt.lr
         if itr < warmup_steps:
@@ -514,7 +481,6 @@ if __name__ == "__main__":
 
         writer.add_scalar(tag='Statistics/lr', scalar_value=lr, global_step=itr)
 
-        # Training
         Model.train()
         loss_all, total_num = 0.0, 0.0
 

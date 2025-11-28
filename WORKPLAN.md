@@ -20,6 +20,14 @@
   - 4.1 Data processing part (event marks' effect should be removed)
   - 4.2 Normalization method (log-normalization or **[0, 1] normalization** for all datasets, consistent with all baselines)
   - 4.3 Hyperparams setting (sampling-steps, learning rate schedule, ensemble n_samples etc.)
+- [ ] 5. enhance flow-ensemble
+  - 5.1 filter low-quality samples during sampling stage by some criteria, propose weighting strategy for final ensemble
+  - 5.2 find criteria (i.e. quality measure, e.g., generative uncertainty of multiple trained flow models?), and measure space (origin time & location space? designed (statistical) feature space?) 
+    - refer to "Generative Uncertainty in Diffusion Models" [NeurIPS 2024]: [alphaxiv-assistant chat history](https://www.alphaxiv.org/overview/2502.20946v2)
+  - 5.3 find proper weighting strategy for final ensemble
+  - 5.4 complete `gu_ensemble.py` and use it in `app_uq_ensemble.py`, do experiments on both accuracy and uncertainty metrics
+
+# Phase 1: RectifiedFlow for DSTPP + NLL_cal (2025.4 - 2025.7)
 
 ## 2025.4.18
     -- all by Claude 3.7 Sonnet Thinking
@@ -68,14 +76,35 @@
 ---
 ---
 
-# After AAAI'26 Phase 2 Weak Rejection (2025.11)
+# Phase 2: After AAAI'26 Phase 2 Weak Rejection (2025.11 -)
 
 ## 2025.11.24
 1. refer to `SMASH`, rewrite its docstring
+2. rewrite project docstrings
 
-### Previous Results Fault with `SMASH`
-2. - [ ] previous STPP results on `SMASH` repo are kinda wrong, because the data processing part is not consistent with `DSTPP` repo, where **event marks' effect should be removed**, need to re-conduct experiments on `SMASH` other than directly using its paper results (**all baselines' real results may be worse than paper results?**)
-3. - [ ] re-conduct experiments on `football` dataset with my `RF-STPP`, with better data processing part (e.g. use 'log' normalization for data which is consistent with `SMASH` repo; **Attention:** `SMASH` use log-normalization for all datasets, ours use [0, 1] normalization for all datasets! Is it unfair for baselines? Need to check if the same normalization method is essential for fair comparison!)
+## 2025.11.26
+1. start the idea: implement generative-uncertainty enhanced flow-ensemble method in `gu_ensemble.py` and `app_uq_ensemble.py`, expected to improve both accuracy and uncertainty metrics by filtering low-quality samples during sampling stage and propose weighting strategy for final ensemble
+2. create branch `filter-ensemble` for this idea
+
+## 2025.11.27
+-- claude Opus 4.5
+1. [x] finish the draft codes of `gu_ensemble.py` and `app_uq_ensemble.py`, need to debug and test
+2. [x] reconstruct the codes in `app_uq_ensemble.py` and `RectifiedFlow.py` to support both naive ensemble and generative-uncertainty enhanced ensemble, add `model_utils.py` for some utility functions (related to creating multiple flow models, loading multiple and main models, calculating generative uncertainty, filtering low-quality samples, weighting strategy for final ensemble etc.)
+3. [X] FIX: reconstruct `app_uq_ensemble_test.py` to support both naive ensemble and generative-uncertainty enhanced ensemble, this is the testing script, specific to mode='test' only
+4. [x] reconstruct the project codes to reduce redundancy
+
+## 2025.11.28
+1. [ ] `app_uq_ensemble.py` need fixing: it should mainly support mode='train', gu-enhanced ensemble should be used during inference stage only (not related to training stage)
+2. [ ] EXPERIMENT: train multiple flow models for ensemble on Crime/Earthquake dataset, test the whole pipeline of generative-uncertainty enhanced ensemble
+
+
+## 2025.12.1
+1. [ ] add log-normalization data process option for `d_t` in `dataloader` refer to 'SMASH/chat' (create a temp branch `log-norm`), after fixing `app_uq_ensemble.py` etc.
+
+
+## Previous Results Fault with `SMASH`
+1. - [ ] previous STPP results on `SMASH` repo are kinda wrong, because the data processing part is not consistent with `DSTPP` repo, where **event marks' effect should be removed**, need to re-conduct experiments on `SMASH` other than directly using its paper results (**all baselines' real results may be worse than paper results?**)
+2. - [ ] re-conduct experiments on `football` dataset with my `RF-STPP`, with better data processing part (e.g. use 'log' normalization for data which is consistent with `SMASH` repo; **Attention:** `SMASH` use log-normalization for all datasets, ours use [0, 1] normalization for all datasets! Is it unfair for baselines? Need to check if the same normalization method is essential for fair comparison!)
 
 
 
