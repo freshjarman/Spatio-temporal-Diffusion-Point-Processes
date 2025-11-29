@@ -38,6 +38,7 @@ Arguments:
 import torch
 import torch.nn as nn
 import numpy as np
+import math
 from DSTPP import GaussianDiffusion_ST, Transformer, Transformer_ST, Model_all, ST_Diffusion
 from DSTPP import RectifiedFlow, RF_Diffusion
 from DSTPP.RF_Model_all import RF_Model_all
@@ -111,6 +112,33 @@ def normalization(x, MAX, MIN):
     return (x - MIN) / (MAX - MIN)
 
 
+def denormalization(x, MAX, MIN, log_normalization=False):
+    """
+    Denormalize the data from [0, 1] back to original scale.
+    If log_normalization is True, also apply exp() to reverse the log transform.
+    
+    Args:
+        x: normalized data (tensor)
+        MAX: maximum value used in normalization (scalar or tensor)
+        MIN: minimum value used in normalization (scalar or tensor)
+        log_normalization: whether log transform was applied before normalization
+    
+    Returns:
+        Denormalized data in original scale
+    """
+    x_cpu = x.detach().cpu()
+    # Convert MAX/MIN to tensor if they are lists
+    if isinstance(MAX, list):
+        MAX = torch.tensor(MAX)
+    if isinstance(MIN, list):
+        MIN = torch.tensor(MIN)
+
+    if log_normalization:
+        return torch.exp(x_cpu * (MAX - MIN) + MIN)
+    else:
+        return x_cpu * (MAX - MIN) + MIN
+
+
 def get_args():
     parser = argparse.ArgumentParser(description='DSTPP with Uncertainty Quantification')
     parser.add_argument('--seed', type=int, default=1234, help='')
@@ -139,6 +167,8 @@ def get_args():
     parser.add_argument('--n_ensemble', type=int, default=5, help='ensemble采样数量')
     # cpu核数
     parser.add_argument('--cpu_num', type=int, default=6, help='CPU核数')
+    # Log normalization for temporal data
+    parser.add_argument('--log_normalization', type=int, default=1, help='是否对时间间隔进行log变换 (1=是, 0=否)')
 
     args = parser.parse_args()
     args.cuda = torch.cuda.is_available()
@@ -156,17 +186,29 @@ def data_loader(writer):
     f = open('dataset/{}/data_train.pkl'.format(opt.dataset), 'rb')
     train_data = pickle.load(f)
     train_data = [[list(i) for i in u] for u in train_data]
-    train_data = [[[i[0], i[0] - u[index - 1][0] if index > 0 else i[0]] + i[1:] for index, i in enumerate(u)] for u in train_data]
 
     f = open('dataset/{}/data_val.pkl'.format(opt.dataset), 'rb')
     val_data = pickle.load(f)
     val_data = [[list(i) for i in u] for u in val_data]
-    val_data = [[[i[0], i[0] - u[index - 1][0] if index > 0 else i[0]] + i[1:] for index, i in enumerate(u)] for u in val_data]
 
     f = open('dataset/{}/data_test.pkl'.format(opt.dataset), 'rb')
     test_data = pickle.load(f)
     test_data = [[list(i) for i in u] for u in test_data]
-    test_data = [[[i[0], i[0] - u[index - 1][0] if index > 0 else i[0]] + i[1:] for index, i in enumerate(u)] for u in test_data]
+
+    # Compute time intervals (d_t) with optional log transform
+    if not opt.log_normalization:
+        # Standard: d_t = t_i - t_{i-1}
+        train_data = [[[i[0], i[0] - u[index - 1][0] if index > 0 else i[0]] + i[1:] for index, i in enumerate(u)] for u in train_data]
+        val_data = [[[i[0], i[0] - u[index - 1][0] if index > 0 else i[0]] + i[1:] for index, i in enumerate(u)] for u in val_data]
+        test_data = [[[i[0], i[0] - u[index - 1][0] if index > 0 else i[0]] + i[1:] for index, i in enumerate(u)] for u in test_data]
+    else:
+        # Log transform: log(max(d_t, 1e-4)) to handle long-tail distribution
+        train_data = [[[i[0], math.log(max(i[0] - u[index - 1][0], 1e-4)) if index > 0 else math.log(max(i[0], 1e-4))] + i[1:]
+                       for index, i in enumerate(u)] for u in train_data]
+        val_data = [[[i[0], math.log(max(i[0] - u[index - 1][0], 1e-4)) if index > 0 else math.log(max(i[0], 1e-4))] + i[1:]
+                     for index, i in enumerate(u)] for u in val_data]
+        test_data = [[[i[0], math.log(max(i[0] - u[index - 1][0], 1e-4)) if index > 0 else math.log(max(i[0], 1e-4))] + i[1:]
+                      for index, i in enumerate(u)] for u in test_data]
 
     data_all = train_data + test_data + val_data
 
@@ -179,7 +221,11 @@ def data_loader(writer):
             Max.append(1)
             Min.append(0)
 
-    assert Min[1] >= 0
+    # Only check Min[1] >= 0 when not using log normalization
+    # (log values can be negative, e.g., log(1e-4) ≈ -9.2)
+    if not opt.log_normalization:
+        assert Min[1] >= 0, "Time interval should be non-negative when not using log normalization"
+
     # normalize d_time and location (vector)
     train_data = [[[normalization(i[j], Max[j], Min[j]) for j in range(len(i))] for i in u] for u in train_data]
     test_data = [[[normalization(i[j], Max[j], Min[j]) for j in range(len(i))] for i in u] for u in test_data]
@@ -292,16 +338,14 @@ if __name__ == "__main__":
 
                     loss = Model.diffusion(torch.cat((event_time_non_mask, event_loc_non_mask), dim=-1), enc_out_non_mask)
                     loss_test_all += loss.item() * event_time_non_mask.shape[0]
-                    # Temporal
-                    real = (event_time_non_mask[:, 0, :].detach().cpu()) * (MAX[1] - MIN[1]) + MIN[1]
-                    gen = (sampled_seq[:, 0, :1].detach().cpu()) * (MAX[1] - MIN[1]) + MIN[1]
+                    # Temporal - use denormalization function with log_normalization support
+                    real = denormalization(event_time_non_mask[:, 0, :], MAX[1], MIN[1], opt.log_normalization)
+                    gen = denormalization(sampled_seq[:, 0, :1], MAX[1], MIN[1], opt.log_normalization)
                     mae_temporal += torch.abs(real - gen).sum().item()
                     rmse_temporal += ((real - gen)**2).sum().item()
-                    # Spatial
-                    real = event_loc_non_mask[:, 0, :].detach().cpu()
-                    real = real * (torch.tensor([MAX[2:]]) - torch.tensor([MIN[2:]])) + torch.tensor([MIN[2:]])
-                    gen = sampled_seq[:, 0, -opt.dim:].detach().cpu()
-                    gen = gen * (torch.tensor([MAX[2:]]) - torch.tensor([MIN[2:]])) + torch.tensor([MIN[2:]])
+                    # Spatial - use denormalization function (no log transform for spatial data)
+                    real = denormalization(event_loc_non_mask[:, 0, :], MAX[2:], MIN[2:], log_normalization=False)
+                    gen = denormalization(sampled_seq[:, 0, -opt.dim:], MAX[2:], MIN[2:], log_normalization=False)
                     mae_spatial += torch.sqrt(torch.sum((real - gen)**2, dim=-1)).sum().item()
 
                     total_num += gen.shape[0]
@@ -381,17 +425,15 @@ if __name__ == "__main__":
                         ensemble_temporal_mean = (stacked_temporal * weights_view).sum(dim=0)  # [bsz, 1]
                         ensemble_spatial_mean = (stacked_spatial * weights_view).sum(dim=0)  # [bsz, dim]
 
-                        # Temporal metrics
-                        real_time_gt = (event_time_non_mask[:, 0, :].detach().cpu()) * (MAX[1] - MIN[1]) + MIN[1]
-                        gen_temporal = (ensemble_temporal_mean.detach().cpu()) * (MAX[1] - MIN[1]) + MIN[1]
+                        # Temporal metrics - use denormalization function with log_normalization support
+                        real_time_gt = denormalization(event_time_non_mask[:, 0, :], MAX[1], MIN[1], opt.log_normalization)
+                        gen_temporal = denormalization(ensemble_temporal_mean, MAX[1], MIN[1], opt.log_normalization)
                         mae_temporal += torch.abs(real_time_gt - gen_temporal).sum().item()
                         rmse_temporal += ((real_time_gt - gen_temporal)**2).sum().item()
 
-                        # Spatial metrics
-                        real_loc_gt = event_loc_non_mask[:, 0, :].detach().cpu()
-                        real_loc_gt = real_loc_gt * (torch.tensor([MAX[2:]]) - torch.tensor([MIN[2:]])) + torch.tensor([MIN[2:]])
-                        gen_spatial = ensemble_spatial_mean.detach().cpu()
-                        gen_spatial = gen_spatial * (torch.tensor([MAX[2:]]) - torch.tensor([MIN[2:]])) + torch.tensor([MIN[2:]])
+                        # Spatial metrics - use denormalization function (no log transform for spatial data)
+                        real_loc_gt = denormalization(event_loc_non_mask[:, 0, :], MAX[2:], MIN[2:], log_normalization=False)
+                        gen_spatial = denormalization(ensemble_spatial_mean, MAX[2:], MIN[2:], log_normalization=False)
                         mae_spatial += torch.sqrt(torch.sum((real_loc_gt - gen_spatial)**2, dim=-1)).sum().item()
 
                         total_num += gen_temporal.shape[0]
@@ -401,11 +443,11 @@ if __name__ == "__main__":
                         sampled_spatial_denorm = []
 
                         for temp_sample in sampled_temporal_all:
-                            temp_denorm = temp_sample.detach().cpu() * (MAX[1] - MIN[1]) + MIN[1]
+                            temp_denorm = denormalization(temp_sample, MAX[1], MIN[1], opt.log_normalization)
                             sampled_temporal_denorm.append(temp_denorm.unsqueeze(1))
 
                         for spat_sample in sampled_spatial_all:
-                            spat_denorm = spat_sample.detach().cpu() * (torch.tensor([MAX[2:]]) - torch.tensor([MIN[2:]])) + torch.tensor([MIN[2:]])
+                            spat_denorm = denormalization(spat_sample, MAX[2:], MIN[2:], log_normalization=False)
                             sampled_spatial_denorm.append(spat_denorm.unsqueeze(1))
 
                         # Calculate calibration scores
