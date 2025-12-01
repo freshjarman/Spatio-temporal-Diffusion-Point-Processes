@@ -104,11 +104,13 @@
    - `python -u app_uq_ensemble.py --dataset Earthquake --mode train --model_type rf --enable_uq --n_ensemble 100 --samplingsteps 5 --timesteps 1000 --batch_size 512 --total_epochs 2000 --lr 5e-4 --seed 5555`
 
 ## 2025.12.1
-1. [ ] fix bugs in `Modelsave` and `logs`, w.r.t. multiple models saving and loading in `app_uq_ensemble.py` and `app_uq_ensemble_test.py` (how to name the path properly?)
-2. [ ] fix auxiliary models loading codes to support multiple loading-path settings, and ensure that only sample with main model onece during sampling stage in `app_uq_ensemble_test.py`
+1. [x] fix bugs in `Modelsave` and `logs`, w.r.t. multiple models saving and loading in `app_uq_ensemble.py` and `app_uq_ensemble_test.py` (how to name the path properly?)
+2. [x] fix auxiliary models loading codes to support multiple loading-path settings (cross-seeds, same-seed-different-epochs), and ensure that only sample with main model onece during sampling stage in `app_uq_ensemble_test.py`
+3. [x] feat: [Integrated into `README.md`] add `ensemble-test.md` for `app_uq_ensemble_test.py` usage guide, including parameter explanation table, notes, auxiliary model selection suggestions etc.
 
 ## 2025.12.2
 1. [ ] EXPERIMENTs: via trained models (different seeds or different epochs), test the whole pipeline of generative-uncertainty enhanced ensemble on both accuracy and uncertainty metrics
+2. [ ] feat: [Training] add guidence in `README.md` for `app_uq_ensemble.py` usage guide
 
 
 ## Previous Results Fault with `SMASH`

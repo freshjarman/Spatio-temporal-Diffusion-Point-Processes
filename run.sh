@@ -19,3 +19,54 @@ $env:KMP_DUPLICATE_LIB_OK="TRUE"; python app_uq_ensemble_test.py --dataset Crime
 # cost time 
 $env:KMP_DUPLICATE_LIB_OK="TRUE"; python app_test_cost_time.py --dataset Earthquake --mode test --model_type rf --timesteps 1000 --n_ensemble 1 --samplingsteps 3 --batch_size 64 --cuda_id 0
 $env:KMP_DUPLICATE_LIB_OK="TRUE"; python app_test_cost_time.py --dataset Earthquake --mode test --model_type ddpm --timesteps 500 --n_ensemble 1 --samplingsteps 500 --batch_size 64 --cuda_id 0
+
+# ######################### new args ################################
+
+# common 
+# 目前想保持原先的数据预处理设置，必须要加--log_normalization 0
+--log_normalization 0 # whether to use log-normalization for d_t data processing, 0: no, 1: yes
+
+# TEST Stage: 完整的质量过滤集成测试命令
+
+#### 1 同 Seed 不同 Epoch（使用 --aux_model_dir）
+
+```linux
+python app_uq_ensemble_test.py \
+    --dataset Earthquake \
+    --mode test \
+    --model_type rf \
+    --dim 2 \
+    --timesteps 1000 \
+    --samplingsteps 50 \
+    --n_ensemble 100 \
+    --seed 1234 \
+    --cuda_id 0 \
+    --cpu_num 6 \
+    --log_normalization 1 \
+    --main_model_path "./ModelSave/dataset_Earthquake_timesteps_1000_2025-06-09-10h/model_280.pkl" \
+    --enable_filtered_ensemble \
+    --aux_model_dir "./ModelSave/dataset_Earthquake_timesteps_1000_2025-06-09-10h/" \
+    --aux_model_epochs "100,150,200,250,280" \
+    --filter_ratio 0.2 \
+    --use_weighting
+```
+
+#### 2 不同 Seed（使用 --aux_model_paths）
+
+```linux
+python app_uq_ensemble_test.py \
+    --dataset Crime \
+    --mode test \
+    --model_type rf \
+    --dim 2 \
+    --timesteps 500 \
+    --samplingsteps 50 \
+    --n_ensemble 100 \
+    --seed 1234 \
+    --cuda_id 0 \
+    --main_model_path "./ModelSave/dataset_Crime_timesteps_500_2025-12-01-10h_seed_1023/model_200.pkl" \
+    --enable_filtered_ensemble \
+    --aux_model_paths "./ModelSave/dataset_Crime_timesteps_500_2025-12-01-10h_seed_1023/model_200.pkl,./ModelSave/dataset_Crime_timesteps_500_2025-12-01-10h_seed_5555/model_200.pkl,./ModelSave/dataset_Crime_timesteps_500_2025-12-01-10h_seed_218/model_200.pkl,./ModelSave/dataset_Crime_timesteps_500_2025-12-01-10h_seed_617/model_200.pkl" \
+    --filter_ratio 0.2 \
+    --use_weighting
+```

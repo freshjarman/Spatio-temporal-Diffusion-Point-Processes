@@ -14,18 +14,27 @@ Key Features:
     - Uses multiple auxiliary models for noise quality evaluation
     - Entropy-based filtering and inverse-entropy weighting
     - Runs 10 times for statistical analysis (mean ± std)
+    - Supports cross-seed auxiliary models via --aux_model_paths
 
 Usage:
-    # Naive ensemble (default)
-    python app_uq_ensemble_test.py --dataset Earthquake --n_ensemble 50
+    # 详细使用方案参考 ensemble-test.md 文档
 
-    # Quality-filtered ensemble
-    python app_uq_ensemble_test.py --dataset Earthquake --n_ensemble 50 \\
+    # Naive ensemble (单模型多次采样)
+    python app_uq_ensemble_test.py --dataset Earthquake --mode test --n_ensemble 50 \\
+        --main_model_path ./ModelSave/xxx/model_280.pkl
+
+    # Quality-filtered ensemble - 同 seed 不同 epoch
+    python app_uq_ensemble_test.py --dataset Earthquake --mode test --n_ensemble 100 \\
+        --main_model_path ./ModelSave/xxx/model_280.pkl \\
         --enable_filtered_ensemble \\
-        --aux_model_dir ./ModelSave/dataset_Earthquake_timesteps_1000_xxx/ \\
+        --aux_model_dir ./ModelSave/xxx/ \\
         --aux_model_epochs "100,150,200,250"
 
-        # PS: aux-models 思考可以选一次选连的不同epoch对应的models，也可以尝试选择不同seed训练的models
+    # Quality-filtered ensemble - 不同 seed (跨 seed)
+    python app_uq_ensemble_test.py --dataset Crime --mode test --n_ensemble 100 \\
+        --main_model_path ./ModelSave/seed_1023/model_200.pkl \\
+        --enable_filtered_ensemble \\
+        --aux_model_paths "./ModelSave/seed_1023/model_200.pkl,./ModelSave/seed_5555/model_200.pkl,./ModelSave/seed_218/model_200.pkl"
 """
 
 import torch
@@ -53,7 +62,7 @@ import datetime
 
 # Import model utilities and enhanced ensemble functions
 from DSTPP.model_utils import create_model, load_model, load_multiple_models, find_model_checkpoints, parse_epochs_string
-from gu_ensemble import quality_filtered_ensemble
+from gu_ensemble import quality_filtered_ensemble, find_main_model_index_by_path
 
 
 def ensemble_sample(model, batch_size, cond, n_samples=100, dim=2):
@@ -151,12 +160,28 @@ def get_args():
     # cpu核数
     parser.add_argument('--cpu_num', type=int, default=6, help='CPU核数')
 
+    # Main model path (required for testing)
+    parser.add_argument('--main_model_path', type=str, default=None, help='Path to the main model checkpoint for final predictions (required)')
+
     # Enhanced ensemble arguments (quality-filtered ensemble)
     parser.add_argument('--enable_filtered_ensemble', action='store_true', help='启用quality-filtered ensemble（需要多个辅助模型）')
-    parser.add_argument('--aux_model_dir', type=str, default=None, help='Directory containing auxiliary model checkpoints')
+    # Option 1: Single directory with different epochs (same seed)
+    parser.add_argument('--aux_model_dir',
+                        type=str,
+                        default=None,
+                        help='Directory containing auxiliary model checkpoints (same seed, different epochs)')
     parser.add_argument('--aux_model_epochs', type=str, default=None, help='Comma-separated epochs to load, e.g., "100,120,140"')
+    # Option 2: Multiple paths directly (supports cross-seed models)
+    parser.add_argument(
+        '--aux_model_paths',
+        type=str,
+        default=None,
+        help='Comma-separated full paths to auxiliary models (supports cross-seed). Example: "path1/model_100.pkl,path2/model_150.pkl"')
     parser.add_argument('--filter_ratio', type=float, default=0.2, help='Ratio of low-quality noises to filter out')
-    parser.add_argument('--use_weighting', action='store_true', default=True, help='Use inverse-entropy weighting for ensemble')
+    parser.add_argument('--use_weighting',
+                        action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help='Use inverse-entropy weighting for ensemble (use --no-use_weighting to disable)')
     # Log normalization for temporal data
     parser.add_argument('--log_normalization', type=int, default=1, help='是否对时间间隔进行log变换 (1=是, 0=否)')
 
@@ -280,42 +305,64 @@ if __name__ == "__main__":
     print('mode:', opt.mode)
     print('enable_filtered_ensemble:', opt.enable_filtered_ensemble)
 
-    # Model path configuration
-    MODEL_PATH = './ModelSave/dataset_Earthquake_timesteps_1000_2025-06-09-10h/model_280.pkl'
+    # ============ Validate Main Model Path ============
+    if opt.main_model_path is None:
+        raise ValueError("--main_model_path is required for testing. Please specify the path to the main model.")
+
+    if not os.path.exists(opt.main_model_path):
+        raise FileNotFoundError(f"Main model not found: {opt.main_model_path}")
+
+    # Suggested checkpoints (before 2025.7)
+    # MODEL_PATH = './ModelSave/dataset_Earthquake_timesteps_1000_2025-06-09-10h/model_280.pkl'
     # MODEL_PATH = './ModelSave/dataset_Earthquake_timesteps_50_2025-05-27-09h/model_140.pkl'
     # MODEL_PATH = './ModelSave/dataset_Crime_timesteps_50_2025-05-27-09h/model_190.pkl'
     # MODEL_PATH = './ModelSave/dataset_Football_timesteps_500_2025-06-09-10h/model_1220.pkl'
-
     # ============ Model Creation (using utility function) ============
     Model = create_model(opt, device)
     print("Model created successfully!")
 
     # ============ Load Main Model ============
     if opt.mode == 'test':
-        model_path = MODEL_PATH
-        if not os.path.exists(model_path):
-            raise FileNotFoundError("Model path does not exist: {}".format(model_path))
-        print("Loading model from:", model_path)
-        Model.load_state_dict(torch.load(model_path, map_location=device))
+        print(f"Loading main model from: {opt.main_model_path}")
+        Model.load_state_dict(torch.load(opt.main_model_path, map_location=device))
         Model.to(device)
         Model.eval()
-        print("Model loaded successfully!")
+        print("Main model loaded successfully!")
     else:
-        # 报错提示仅支持测试模式并退出
         raise RuntimeError("Only test mode is supported. Exiting.")
-        # Model.to(device)
 
     # ============ Load Auxiliary Models for Enhanced Ensemble ============
     auxiliary_models = None
-    if opt.enable_filtered_ensemble and opt.aux_model_dir is not None:
+    aux_checkpoint_paths = []  # 保存路径以便后续检查主模型是否在辅助模型中
+    main_model_idx_in_aux = None  # 主模型在辅助模型列表中的索引（用于复用优化）
+
+    if opt.enable_filtered_ensemble:
         print("Loading auxiliary models for quality-filtered ensemble...")
-        epochs = parse_epochs_string(opt.aux_model_epochs)
+
+        # Option 1: Direct paths (supports cross-seed models)
+        if opt.aux_model_paths is not None:
+            aux_checkpoint_paths = [p.strip() for p in opt.aux_model_paths.split(',')]
+            print(f"Using {len(aux_checkpoint_paths)} auxiliary models from explicit paths (cross-seed supported)")
+        # Option 2: Single directory with different epochs
+        elif opt.aux_model_dir is not None:
+            epochs = parse_epochs_string(opt.aux_model_epochs)
+            aux_checkpoint_paths = find_model_checkpoints(opt.aux_model_dir, epochs)
+            print(f"Found {len(aux_checkpoint_paths)} auxiliary models in directory (same seed)")
+        else:
+            print("Warning: --enable_filtered_ensemble requires either --aux_model_paths or --aux_model_dir")
+
         try:
-            checkpoint_paths = find_model_checkpoints(opt.aux_model_dir, epochs)
-            if len(checkpoint_paths) >= 2:
+            if len(aux_checkpoint_paths) >= 2:
                 # load_multiple_models 内部已经处理 device 和 eval 模式
-                auxiliary_models = load_multiple_models(opt, device, checkpoint_paths)
+                auxiliary_models = load_multiple_models(opt, device, aux_checkpoint_paths)
                 print(f"Enhanced ensemble enabled with {len(auxiliary_models)} auxiliary models.")
+
+                # 检查主模型是否在辅助模型路径中（用于优化：避免重复采样）
+                main_model_idx_in_aux = find_main_model_index_by_path(opt.main_model_path, aux_checkpoint_paths)
+                if main_model_idx_in_aux is not None:
+                    print(f"[Optimization] Main model found in auxiliary models at index {main_model_idx_in_aux}. Will reuse cached predictions.")
+                else:
+                    print("[Info] Main model not in auxiliary models. Will sample independently for final predictions.")
             else:
                 print("Warning: Less than 2 auxiliary models. Falling back to naive ensemble.")
         except FileNotFoundError as e:
@@ -365,19 +412,24 @@ if __name__ == "__main__":
                 # 根据是否启用质量过滤ensemble选择不同的采样策略
                 if opt.enable_filtered_ensemble and auxiliary_models:
                     # 使用质量过滤的ensemble (需要多个模型)
-                    sampled_temporal_all, sampled_spatial_all, ensemble_weights = quality_filtered_ensemble(model=Model,
-                                                                                                            auxiliary_models=auxiliary_models,
-                                                                                                            batch_size=event_time_non_mask.shape[0],
-                                                                                                            cond=enc_out_non_mask,
-                                                                                                            n_noises=opt.n_ensemble,
-                                                                                                            dim=opt.dim,
-                                                                                                            filter_ratio=opt.filter_ratio,
-                                                                                                            use_weighting=opt.use_weighting,
-                                                                                                            device=device)
+                    # main_model_idx_in_aux 已在外部预计算（基于路径比较）
+                    sampled_temporal_all, sampled_spatial_all, ensemble_weights = quality_filtered_ensemble(
+                        model=Model,
+                        auxiliary_models=auxiliary_models,
+                        batch_size=event_time_non_mask.shape[0],
+                        cond=enc_out_non_mask,
+                        n_noises=opt.n_ensemble,
+                        dim=opt.dim,
+                        filter_ratio=opt.filter_ratio,
+                        use_weighting=opt.use_weighting,
+                        device=device,
+                        main_model_index_in_auxiliary=main_model_idx_in_aux)
                     # 注意: 过滤后 ensemble_weights 长度可能小于 n_ensemble
                     n_kept = len(sampled_temporal_all)
                     if run_idx == 0:  # 只在第一次运行时打印
                         print(f"  [Filtered Ensemble] Kept {n_kept} / {opt.n_ensemble} samples after quality filtering")
+                        if main_model_idx_in_aux is not None:
+                            print(f"  [Optimization] Reusing main model predictions from evaluation phase (index={main_model_idx_in_aux})")
                 else:
                     # 使用朴素ensemble (单模型多次采样)
                     sampled_temporal_all, sampled_spatial_all, ensemble_weights = ensemble_sample(Model, event_time_non_mask.shape[0],
@@ -590,7 +642,7 @@ if __name__ == "__main__":
 
     # 保存到json文件
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename_without_ext = MODEL_PATH.split('/')[-1].split('.')[0]
+    filename_without_ext = os.path.basename(opt.main_model_path).replace('.pkl', '')
     results_file = f'./jsons/{filename_without_ext}_uq_test_results_{opt.dataset}_{timestamp}.json'
     with open(results_file, 'w') as f:
         json.dump(results_summary, f, indent=2)
