@@ -94,12 +94,21 @@
 4. [x] reconstruct the project codes to reduce redundancy
 
 ## 2025.11.28
-1. [ ] `app_uq_ensemble.py` need fixing: it should mainly support mode='train', gu-enhanced ensemble should be used during inference stage only (not related to training stage)
-2. [ ] EXPERIMENT: train multiple flow models for ensemble on Crime/Earthquake dataset, test the whole pipeline of generative-uncertainty enhanced ensemble
+1. [x] `app_uq_ensemble.py` need fixing: it should mainly support mode='train', gu-enhanced ensemble should be used during inference stage only (not related to training stage)
+2. [x] add log-normalization data process option for `d_t` in `dataloader` refer to 'SMASH/chat' (create a temp branch `log-norm`), after fixing `app_uq_ensemble.py` etc.
 
+
+## 2025.11.30
+1. [x] EXPERIMENTs: train 4 RF-Models on `Crime` dataset with different seeds on `SEU-platform` (order: 218, 617, 1023, 5555): 
+   - `python -u app_uq_ensemble.py --dataset Crime --mode train --model_type rf --enable_uq --n_ensemble 100 --samplingsteps 10 --timesteps 500 --batch_size 512 --total_epochs 1000 --lr 5e-4 --seed 218`
+   - `python -u app_uq_ensemble.py --dataset Earthquake --mode train --model_type rf --enable_uq --n_ensemble 100 --samplingsteps 5 --timesteps 1000 --batch_size 512 --total_epochs 2000 --lr 5e-4 --seed 5555`
 
 ## 2025.12.1
-1. [ ] add log-normalization data process option for `d_t` in `dataloader` refer to 'SMASH/chat' (create a temp branch `log-norm`), after fixing `app_uq_ensemble.py` etc.
+1. [ ] fix bugs in `Modelsave` and `logs`, w.r.t. multiple models saving and loading in `app_uq_ensemble.py` and `app_uq_ensemble_test.py` (how to name the path properly?)
+2. [ ] fix auxiliary models loading codes to support multiple loading-path settings, and ensure that only sample with main model onece during sampling stage in `app_uq_ensemble_test.py`
+
+## 2025.12.2
+1. [ ] EXPERIMENTs: via trained models (different seeds or different epochs), test the whole pipeline of generative-uncertainty enhanced ensemble on both accuracy and uncertainty metrics
 
 
 ## Previous Results Fault with `SMASH`

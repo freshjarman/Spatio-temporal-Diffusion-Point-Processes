@@ -1,27 +1,43 @@
 """
-app_uq_ensemble.py
+app_uq_ensemble.py - Training Script for DSTPP with UQ
 
-This is the main execution script for the Spatio-temporal Diffusion Point Processes (DSTPP) project,
-enhanced with Uncertainty Quantification (UQ) capabilities.
+This is the TRAINING script for Spatio-temporal Diffusion Point Processes (DSTPP).
+For dedicated testing with quality-filtered ensemble, use `app_uq_ensemble_test.py`.
+
+Pipeline Overview:
+    1. Training Phase (this script): Train model, periodic validation with naive ensemble
+    2. Testing Phase (app_uq_ensemble_test.py): Load trained models, apply quality-filtered ensemble
 
 Key Features:
-- **Model Support**: Supports training and evaluation of both:
-    - Denoising Diffusion Probabilistic Models (DDPM)
-    - Rectified Flow (RF) models
-- **Uncertainty Quantification**: Implements ensemble sampling (`ensemble_sample`) to estimate
-  uncertainty in spatio-temporal predictions.
-- **Dataset Handling**: Loads and processes various datasets (e.g., Earthquake, Citibike, COVID19),
-  normalizes temporal and spatial data into [0, 1] range.
-- **Training & Evaluation**: Contains the complete pipeline for:
-    - Data loading and preprocessing
-    - Model initialization (Transformer-based encoder + Diffusion/RF decoder)
-    - Training loop with loss calculation
-    - Evaluation metrics (NLL, spatial/temporal error, calibration scores)
+    - Supports DDPM and Rectified Flow (RF) models
+    - Naive ensemble sampling for UQ during training validation
+    - Saves model checkpoints every 10 epochs for later selection
+    - Unique experiment naming to prevent collisions between runs
+
+Experiment Naming Convention:
+    {dataset}_{model_type}_T{timesteps}_S{samplingsteps}_seed{seed}_{datetime}_{uuid}
+    
+    Example: Earthquake_rf_T1000_S50_seed1234_20251201_1430_a1b2c3
+    
+    This ensures:
+    - Different seeds → different directories
+    - Different model_type → different directories
+    - Different timesteps/samplingsteps → different directories
+    - Same params at same time → UUID prevents collision
+
+Output Structure:
+    ./ModelSave/{exp_name}/
+        ├── config.json          # All hyperparameters for reproducibility
+        ├── model_0.pkl          # Checkpoint at epoch 0
+        ├── model_10.pkl         # Checkpoint at epoch 10
+        └── ...
+    
+    ./logs/{exp_name}/           # TensorBoard logs
 
 Usage:
     Run this script via command line with arguments to specify the dataset, model type, and hyperparameters.
     Example:
-        python app_uq_ensemble.py --dataset Earthquake --model_type rf --enable_uq --n_ensemble 50
+        python -u app_uq_ensemble.py --dataset Earthquake --model_type rf --enable_uq --n_ensemble 50
 
 
 Arguments:
@@ -32,8 +48,6 @@ Arguments:
     --mode: 'train' or 'test'.
     ... (see get_args() for full list)
 """
-
-# FIXME: 待改正——应该只有mode为'test'时，才需要加载多个辅助模型进行quality-filtered ensemble；train时使用naive ensemble即可
 
 import torch
 import torch.nn as nn
@@ -282,28 +296,88 @@ def LR_warmup(lr, epoch_num, epoch_current):
     return lr * (epoch_current + 1) / epoch_num
 
 
+def generate_experiment_name(opt):
+    """
+    Generate a unique and descriptive experiment name based on key hyperparameters.
+    
+    Naming convention:
+        {dataset}_{model_type}_T{timesteps}_S{samplingsteps}_seed{seed}_{date}_{short_uuid}
+    
+    This ensures:
+        1. Human-readable: key params visible in name
+        2. Unique: short UUID prevents any collision
+        3. Sortable: date format allows chronological sorting
+    """
+    import uuid
+
+    now = datetime.datetime.now()
+    date_str = now.strftime("%Y%m%d_%H%M")
+    short_uuid = str(uuid.uuid4())[:6]  # 6 chars is enough for uniqueness
+
+    # Build experiment name with key hyperparameters
+    exp_name = (f"{opt.dataset}_"
+                f"{opt.model_type}_"
+                f"T{opt.timesteps}_"
+                f"S{opt.samplingsteps}_"
+                f"seed{opt.seed}_"
+                f"{date_str}_"
+                f"{short_uuid}")
+
+    return exp_name
+
+
+def save_experiment_config(opt, save_dir):
+    """
+    Save all experiment configurations to a JSON file for reproducibility.
+    """
+    config = vars(opt).copy()
+    config_path = os.path.join(save_dir, 'config.json')
+
+    with open(config_path, 'w') as f:
+        json.dump(config, f, indent=2, default=str)
+
+    print(f"Experiment config saved to: {config_path}")
+
+
 if __name__ == "__main__":
     setup_init(opt)
     setproctitle.setproctitle("RF-STPP-UQ-Training")
 
-    print('dataset:{}'.format(opt.dataset))
-    print('UQ enabled:', opt.enable_uq)
+    print('=' * 60)
+    print('Experiment Configuration:')
+    print(f'  Dataset: {opt.dataset}')
+    print(f'  Model Type: {opt.model_type}')
+    print(f'  Timesteps: {opt.timesteps}, Sampling Steps: {opt.samplingsteps}')
+    print(f'  Seed: {opt.seed}')
+    print(f'  Log Normalization: {bool(opt.log_normalization)}')
+    print(f'  UQ Enabled: {opt.enable_uq}')
     if opt.enable_uq:
-        print('Ensemble samples need num = :', opt.n_ensemble)
+        print(f'  Ensemble Samples: {opt.n_ensemble}')
+    print('=' * 60)
 
-    # Specify a directory for logging data
-    now = datetime.datetime.now()
-    date = now.strftime("%Y-%m-%d-%Hh")
-    logdir = "./logs/{}_timesteps_{}_{}".format(opt.dataset, opt.timesteps, date)
-    model_path = './ModelSave/dataset_{}_timesteps_{}_{}/'.format(opt.dataset, opt.timesteps, date)
+    # ============ Generate Unique Experiment Name ============
+    # Format: {dataset}_{model_type}_T{timesteps}_S{samplingsteps}_seed{seed}_{datetime}_{uuid}
+    # This prevents any collision between experiments with different hyperparameters
+    exp_name = generate_experiment_name(opt)
+    print(f'Experiment Name: {exp_name}')
+
+    # Create directories with unique experiment name
+    logdir = f"./logs/{exp_name}"
+    model_path = f"./ModelSave/{exp_name}/"
 
     if not os.path.exists('./ModelSave'):
         os.mkdir('./ModelSave')
+    if not os.path.exists('./logs'):
+        os.mkdir('./logs')
 
     if 'train' in opt.mode and not os.path.exists(model_path):
-        os.mkdir(model_path)
+        os.makedirs(model_path, exist_ok=True)
+        # Save experiment configuration for reproducibility
+        save_experiment_config(opt, model_path)
 
     writer = SummaryWriter(log_dir=logdir, flush_secs=5)
+    print(f'TensorBoard logs: {logdir}')
+    print(f'Model checkpoints: {model_path}')
 
     Model = create_model(opt, device)  # 根据opt.model_type创建模型rf或ddpm
     print("Model created successfully!")
