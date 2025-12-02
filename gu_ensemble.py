@@ -174,6 +174,11 @@ def filter_and_weight_noises(noises: List[torch.Tensor],
         # Uniform weights
         weights = torch.ones(n_keep, device=kept_entropies.device) / n_keep
 
+    # 添加验证断言
+    assert len(filtered_noises) == n_keep, f"Expected {n_keep} filtered noises, got {len(filtered_noises)}"
+    assert weights.shape[0] == n_keep, f"Expected {n_keep} weights, got {weights.shape[0]}"
+    assert torch.isclose(weights.sum(), torch.tensor(1.0)), f"Weights should sum to 1, got {weights.sum()}"
+    
     return filtered_noises, weights, keep_indices
 
 

@@ -481,6 +481,12 @@ if __name__ == "__main__":
                     weights_tensor = torch.tensor(ensemble_weights, device=temporal_stack.device, dtype=temporal_stack.dtype)
                 weights_tensor = weights_tensor.view(-1, 1, 1)  # [n_filtered, 1, 1]
 
+                # 在加权平均之前添加验证
+                n_filtered = len(sampled_temporal_all)
+                assert len(sampled_spatial_all) == n_filtered, "Temporal and spatial predictions count mismatch"
+                assert weights_tensor.shape[0] == n_filtered, f"Weights count ({weights_tensor.shape[0]}) != predictions count ({n_filtered})"
+
+                # 加权平均
                 ensemble_temporal_mean = (temporal_stack * weights_tensor).sum(dim=0)  # [bsz, 1]
                 ensemble_spatial_mean = (spatial_stack * weights_tensor).sum(dim=0)  # [bsz, dim]
 

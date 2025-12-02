@@ -109,7 +109,7 @@
 3. [x] feat: [Integrated into `README.md`] add `ensemble-test.md` for `app_uq_ensemble_test.py` usage guide, including parameter explanation table, notes, auxiliary model selection suggestions etc.
 
 ## 2025.12.2
-1. [ ] EXPERIMENTs: via trained models (different seeds or different epochs), test the whole pipeline of generative-uncertainty enhanced ensemble on both accuracy and uncertainty metrics
+1. [ ] EXPERIMENTs: via trained models (different seeds or different epochs), select the main model and auxiliary models (then set `--samplingsteps + --n_ensemble`); test the whole pipeline of generative-uncertainty enhanced ensemble on both accuracy and uncertainty metrics (by setting `--enable_filtered_ensemble` in `app_uq_ensemble_test.py`, w.r.t. different `--filter_ratio + no-use_weighting` settings)
 2. [ ] feat: [Training] add guidence in `README.md` for `app_uq_ensemble.py` usage guide
 
 

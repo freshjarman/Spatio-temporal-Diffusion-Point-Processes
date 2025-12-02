@@ -39,8 +39,8 @@ python app_uq_ensemble_test.py \
     --timesteps 1000 \
     --samplingsteps 50 \
     --n_ensemble 100 \
-    --seed 1234 \
-    --cuda_id 0 \
+    --seed 218 \
+    # --cuda_id 0 \
     --cpu_num 6 \
     --log_normalization 1 \
     --main_model_path "./ModelSave/dataset_Earthquake_timesteps_1000_2025-06-09-10h/model_280.pkl" \
@@ -60,13 +60,16 @@ python app_uq_ensemble_test.py \
     --model_type rf \
     --dim 2 \
     --timesteps 500 \
-    --samplingsteps 50 \
-    --n_ensemble 100 \
-    --seed 1234 \
-    --cuda_id 0 \
-    --main_model_path "./ModelSave/dataset_Crime_timesteps_500_2025-12-01-10h_seed_1023/model_200.pkl" \
+    --samplingsteps 10 \
+    --n_ensemble 125 \
+    --seed 218 \
+    --main_model_path "./ModelSave/dataset_Crime_timesteps_500_2025-12-01-10h_seed_218/model_200.pkl" \
     --enable_filtered_ensemble \
-    --aux_model_paths "./ModelSave/dataset_Crime_timesteps_500_2025-12-01-10h_seed_1023/model_200.pkl,./ModelSave/dataset_Crime_timesteps_500_2025-12-01-10h_seed_5555/model_200.pkl,./ModelSave/dataset_Crime_timesteps_500_2025-12-01-10h_seed_218/model_200.pkl,./ModelSave/dataset_Crime_timesteps_500_2025-12-01-10h_seed_617/model_200.pkl" \
+    --aux_model_paths "./ModelSave/dataset_Crime_timesteps_500_2025-12-01-10h_seed_218/model_200.pkl,./ModelSave/dataset_Crime_timesteps_500_2025-12-01-10h_seed_1023/model_200.pkl,./ModelSave/dataset_Crime_timesteps_500_2025-12-01-10h_seed_5555/model_170.pkl,./ModelSave/dataset_Crime_timesteps_500_2025-12-01-10h_seed_617/model_180.pkl" \
     --filter_ratio 0.2 \
     --use_weighting
 ```
+
+# Training
+
+python -u app_uq_ensemble.py --dataset Crime --mode train --model_type rf --enable_uq --n_ensemble 100 --samplingsteps 10 --timesteps 500 --batch_size 512 --total_epochs 1000 --lr 5e-4 --seed 218
