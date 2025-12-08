@@ -31,7 +31,7 @@ $env:KMP_DUPLICATE_LIB_OK="TRUE"; python app_test_cost_time.py --dataset Earthqu
 #### 1 同 Seed 不同 Epoch（使用 --aux_model_dir）
 
 ```linux
-python app_uq_ensemble_test.py \
+python -u app_uq_ensemble_test.py \
     --dataset Earthquake \
     --mode test \
     --model_type rf \
@@ -40,9 +40,10 @@ python app_uq_ensemble_test.py \
     --samplingsteps 50 \
     --n_ensemble 100 \
     --seed 218 \
+    --batch_size 512 \
     # --cuda_id 0 \
     --cpu_num 6 \
-    --log_normalization 1 \
+    --log_normalization 0 \  # not use log-normalization for d_t
     --main_model_path "./ModelSave/dataset_Earthquake_timesteps_1000_2025-06-09-10h/model_280.pkl" \
     --enable_filtered_ensemble \
     --aux_model_dir "./ModelSave/dataset_Earthquake_timesteps_1000_2025-06-09-10h/" \
@@ -54,15 +55,17 @@ python app_uq_ensemble_test.py \
 #### 2 不同 Seed（使用 --aux_model_paths）
 
 ```linux
-python app_uq_ensemble_test.py \
+python -u app_uq_ensemble_test.py \
     --dataset Crime \
     --mode test \
     --model_type rf \
     --dim 2 \
+    --log_normalization 0 \  # not use log-normalization for d_t
     --timesteps 500 \
     --samplingsteps 10 \
     --n_ensemble 125 \
     --seed 218 \
+    --batch_size 512 \
     --main_model_path "./ModelSave/dataset_Crime_timesteps_500_2025-12-01-10h_seed_218/model_200.pkl" \
     --enable_filtered_ensemble \
     --aux_model_paths "./ModelSave/dataset_Crime_timesteps_500_2025-12-01-10h_seed_218/model_200.pkl,./ModelSave/dataset_Crime_timesteps_500_2025-12-01-10h_seed_1023/model_200.pkl,./ModelSave/dataset_Crime_timesteps_500_2025-12-01-10h_seed_5555/model_170.pkl,./ModelSave/dataset_Crime_timesteps_500_2025-12-01-10h_seed_617/model_180.pkl" \
@@ -70,6 +73,7 @@ python app_uq_ensemble_test.py \
     --use_weighting
 ```
 
-# Training
+# Training Stage
 
 python -u app_uq_ensemble.py --dataset Crime --mode train --model_type rf --enable_uq --n_ensemble 100 --samplingsteps 10 --timesteps 500 --batch_size 512 --total_epochs 1000 --lr 5e-4 --seed 218
+python -u app_uq_ensemble.py --dataset Crime --mode train --model_type rf --enable_uq --n_ensemble 150 --timesteps 500 --samplingsteps 10 --batch_size 512 --total_epochs 500 --lr 5e-4 --log_normalization 1

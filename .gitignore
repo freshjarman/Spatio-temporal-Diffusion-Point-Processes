@@ -11,6 +11,8 @@ dataset/
 ModelSave/
 figures/
 jsons/
+notebooks/
+records/
 
 # Executables
 *.swf
@@ -32,3 +34,4 @@ app_uq_ensemble_debug.py
 Spatio-temporal-Diffusion-Point-Processes.code-workspace
 # ensemble-test.md
 ensemble-test.md
+WORKRecords.md

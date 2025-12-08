@@ -180,7 +180,7 @@ def get_args():
     parser.add_argument('--enable_uq', action='store_true', help='启用uncertainty quantification评估')
     parser.add_argument('--n_ensemble', type=int, default=5, help='ensemble采样数量')
     # cpu核数
-    parser.add_argument('--cpu_num', type=int, default=6, help='CPU核数')
+    parser.add_argument('--cpu_num', type=int, default=12, help='CPU核数')
     # Log normalization for temporal data
     parser.add_argument('--log_normalization', type=int, default=1, help='是否对时间间隔进行log变换 (1=是, 0=否)')
 

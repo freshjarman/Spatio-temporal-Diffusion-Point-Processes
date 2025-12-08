@@ -2,11 +2,31 @@
 
 [![zread](https://img.shields.io/badge/Ask_Zread-_.svg?style=flat&color=00b0aa&labelColor=000000&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB3aWR0aD0iMTYiIGhlaWdodD0iMTYiIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTQuOTYxNTYgMS42MDAxSDIuMjQxNTZDMS44ODgxIDEuNjAwMSAxLjYwMTU2IDEuODg2NjQgMS42MDE1NiAyLjI0MDFWNC45NjAxQzEuNjAxNTYgNS4zMTM1NiAxLjg4ODEgNS42MDAxIDIuMjQxNTYgNS42MDAxSDQuOTYxNTZDNS4zMTUwMiA1LjYwMDEgNS42MDE1NiA1LjMxMzU2IDUuNjAxNTYgNC45NjAxVjIuMjQwMUM1LjYwMTU2IDEuODg2NjQgNS4zMTUwMiAxLjYwMDEgNC45NjE1NiAxLjYwMDFaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik00Ljk2MTU2IDEwLjM5OTlIMi4yNDE1NkMxLjg4ODEgMTAuMzk5OSAxLjYwMTU2IDEwLjY4NjQgMS42MDE1NiAxMS4wMzk5VjEzLjc1OTlDMS42MDE1NiAxNC4xMTM0IDEuODg4MSAxNC4zOTk5IDIuMjQxNTYgMTQuMzk5OUg0Ljk2MTU2QzUuMzE1MDIgMTQuMzk5OSA1LjYwMTU2IDE0LjExMzQgNS42MDE1NiAxMy43NTk5VjExLjAzOTlDNS42MDE1NiAxMC42ODY0IDUuMzE1MDIgMTAuMzk5OSA0Ljk2MTU2IDEwLjM5OTlaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik0xMy43NTg0IDEuNjAwMUgxMS4wMzg0QzEwLjY4NSAxLjYwMDEgMTAuMzk4NCAxLjg4NjY0IDEwLjM5ODQgMi4yNDAxVjQuOTYwMUMxMC4zOTg0IDUuMzEzNTYgMTAuNjg1IDUuNjAwMSAxMS4wMzg0IDUuNjAwMUgxMy43NTg0QzE0LjExMTkgNS42MDAxIDE0LjM5ODQgNS4zMTM1NiAxNC4zOTg0IDQuOTYwMVYyLjI0MDFDMTQuMzk4NCAxLjg4NjY0IDE0LjExMTkgMS42MDAxIDEzLjc1ODQgMS42MDAxWiIgZmlsbD0iI2ZmZiIvPgo8cGF0aCBkPSJNNCAxMkwxMiA0TDQgMTJaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik00IDEyTDEyIDQiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8L3N2Zz4K&logoColor=ffffff)](https://zread.ai/tsinghua-fib-lab/Spatio-temporal-Diffusion-Point-Processes)
 
+
+## 潜在风险
+
+- 我是在DSTPP框架上扩展支持了Flow Matching的建模方案；因此，我沿用了DDPM中“t=0对应真实数据分布，t=1对应噪声分布”的设定，这与Rectified Flow中“t=0对应噪声分布，t=1对应真实数据分布”的设定是相反的。这在代码实现中会体现在训练时的插值路径设计，采样函数和NLL计算函数的时间步长处理上（即Rectified Flow的插值，采样和NLL计算（详情参考`DSTPP/Appendix.md`中的数学理论比较与我的论文的`Appendix.A`）需要对时间步长进行反转处理）。这可能会引起一些混淆，尤其是对于熟悉Rectified Flow的用户来说。
+
+> 在使用本代码时，请务必注意此类潜在风险，以免引起混淆。
+
+## Overall Framework
+**Next Event Prediction in STPPs**
+
 ![OverallFramework](./assets/framework.png "Our proposed framework")
+
+
+## Experiments Management
+
+- Git (github; gitee)
+- Tensorboard (/logs)
+- Model Checkpoints (/ModelSave, with `config.json`)
+- Argparse (refer to `README.md` & `run.sh` for usage guide)
+
+> PS: recommend to use Hydra (or other config management tools) and WandB in future for better experiment management.
 
 ## Data Reprocessing
 
-- **The dataset used in this project are normalized (specifically, normalized d_time & normalized location), which may affect `NLL` computation in Table2 in `DSTPP` paper! i.e. `Spatial NLL` for `DeepSTPP` which isn't normalized in location.** You can refer to [issues](https://github.com/tsinghua-fib-lab/Spatio-temporal-Diffusion-Point-Processes/issues/4) on Github and [mathematical basics](https://kimi.moonshot.cn/share/cune319l51jflplgpllg) from my KIMI-Chat.
+- **The dataset used in this project are [0,1] normalized (specifically, normalized d_time & normalized location), which may affect `NLL` computation in Table2 in `DSTPP` paper! i.e. `Spatial NLL` for `DeepSTPP` which isn't normalized in location.** You can refer to [issues](https://github.com/tsinghua-fib-lab/Spatio-temporal-Diffusion-Point-Processes/issues/4) on Github and [mathematical basics](https://kimi.moonshot.cn/share/cune319l51jflplgpllg) from my KIMI-Chat.
 
 - **For `Earthquake/Crime/Football` datasets, if you want to use log-normalization for time-intervals (to alleviate long-tail problem of d_t), please make sure to set `--log_normalization 1` both in training and testing stage to keep consistent with `SMASH` framework. (Note that the original `DSTPP` framework didn't implement log-normalization, which I used before AAAI'26.)**
 

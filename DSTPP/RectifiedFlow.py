@@ -1,6 +1,9 @@
 """
 RectifiedFlow.py
 
+注意：在该项目的RF实现中，我基于了DSTPP的代码；所以t=0表示数据分布，t=1表示噪声分布，与标准的RF实现相反，因此差值/loss/ll计算时需要注意时间的方向。
+
+
 This module implements the Rectified Flow framework for the Spatio-temporal Diffusion Point Processes model.
 Rectified Flow is a generative model that learns a transport map between two distributions (e.g., Gaussian noise
 and data distribution) by solving an Ordinary Differential Equation (ODE). It serves as an alternative to
