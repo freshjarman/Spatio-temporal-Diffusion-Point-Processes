@@ -125,10 +125,12 @@ class RF_Diffusion(nn.Module):
 
     def forward(self, x, t, x_self_cond=None, cond=None):
         """
-        模型前向传播
-        x: [B, 1, dim+1] - 包含时间和空间坐标的输入
-        t: [B] - 时间步
+        模型前向传播 - JiT 参数化
+        x: [B, 1, dim+1] - 包含时间和空间坐标的输入 (x_t)
+        t: [B] - 当前时间步 (t=0 数据, t=1 噪声)
         cond: [B, 1, cond_dim*3] - 条件信息
+        
+        内部预测 x_0，输出转换为速度 v = (pred_x0 - x_t) / t
         """
         # 分离时间和空间维度
         x_spatial, x_temporal = x[:, :, 1:].clone(), x[:, :, :1].clone()
@@ -191,6 +193,12 @@ class RF_Diffusion(nn.Module):
         pred_temporal = self.output_temporal(x_output_t)  # [B, 1, 1]
         pred_spatial = self.output_spatial(x_output_s)  # [B, 1, loc_dim]
 
-        # 合并时空维度
-        pred = torch.cat((pred_temporal, pred_spatial), dim=-1)
-        return pred  # [B, 1, dim], dim=loc_dim + t_dim (e.g. 2 + 1)
+        # pred_x0: 网络内部预测的 x_0（数据）
+        pred_x0 = torch.cat((pred_temporal, pred_spatial), dim=-1)  # [B, 1, dim]
+
+        # JiT 参数化: v = (pred_x0 - x_t) / t
+        # 因为 v = x_0 - x_1 = (pred_x0 - x_t) / t
+        t_safe = torch.clamp(t, min=1e-4).view(-1, 1, 1)  # [B, 1, 1]，避免除零
+        v_output = (pred_x0 - x) / t_safe
+
+        return v_output  # [B, 1, dim]
