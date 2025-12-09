@@ -155,6 +155,10 @@ class RectifiedFlow(nn.Module):
             sampling_timesteps=None,
             loss_type='l2',
             use_dynamic_loss_scaling=True,  # 是否使用动态损失缩放
+            # Logit-Normal 时间采样参数 (来自 SD3 / Rectified Flow 改进)
+            use_logit_normal=True,  # 是否使用 logit-normal 采样
+            logit_normal_mean=-0.8,  # P_mean
+            logit_normal_std=0.8,  # P_std
     ):
         super().__init__()
         self.model = model
@@ -163,6 +167,11 @@ class RectifiedFlow(nn.Module):
         self.num_timesteps = timesteps
         self.loss_type = loss_type
         self.use_dynamic_loss_scaling = use_dynamic_loss_scaling
+
+        # Logit-Normal 采样参数
+        self.use_logit_normal = use_logit_normal
+        self.P_mean = logit_normal_mean
+        self.P_std = logit_normal_std
 
         # 采样相关参数
         self.sampling_timesteps = default(sampling_timesteps, timesteps)
@@ -182,6 +191,24 @@ class RectifiedFlow(nn.Module):
             self.register_buffer('loss_weight', weight / weight.mean())
         else:
             self.register_buffer('loss_weight', torch.ones(timesteps))
+
+    def sample_t(self, n: int, device=None):
+        """
+        使用 Logit-Normal 分布采样时间 t ∈ (0, 1)
+        
+        Logit-Normal 分布通过对正态分布应用 sigmoid 变换得到：
+        z ~ N(P_mean, P_std^2)
+        t = sigmoid(z)
+        
+        参数:
+            n: 采样数量
+            device: 设备
+        返回:
+            t: 形状为 [n] 的时间张量，值在 (0, 1) 之间
+        """
+        z = torch.randn(n, device=device) * self.P_std + self.P_mean
+        t = torch.sigmoid(z)
+        return t
 
     def straight_path_interpolation(self, x_start, t, noise=None):
         """
@@ -215,14 +242,20 @@ class RectifiedFlow(nn.Module):
         else:
             raise ValueError(f'invalid loss type {self.loss_type}')
 
-    def p_losses(self, x_start, t_indices, cond=None):
+    def p_losses(self, x_start, t, cond=None):
         """
         计算损失：预测的速度向量与真实速度向量之间的差异
+        
+        参数:
+            x_start: 原始数据（已归一化到 [-1, 1]）
+            t: 时间点张量，形状为 [batch_size]，值在 (0, 1) 之间
+            cond: 条件信息
+        返回:
+            loss: 总损失
+            loss_temporal: 时间维度损失
+            loss_spatial: 空间维度损失
         """
         batch_size = x_start.shape[0]
-
-        # 获取实际时间步长
-        t = self.timesteps[t_indices]
 
         # 计算当前点和真实速度向量
         x_t, true_velocity = self.velocity_vector(x_start, t)  # [bsz, 1, dim] (1 + opt.dim)
@@ -230,19 +263,15 @@ class RectifiedFlow(nn.Module):
         # 模型预测速度向量
         pred_velocity = self.model(x_t, t, None, cond)
 
-        # 计算损失
-        loss = self.loss_fn(pred_velocity, true_velocity, reduction='none')  # [bsz, 1, dim] (1 + opt.dim)
+        # 计算损失：(v - v_pred)^2
+        loss = (pred_velocity - true_velocity)**2  # [bsz, 1, dim]
 
         # 区分时间和空间维度的损失
         loss_temporal = loss[:, :, :1].mean()
         loss_spatial = loss[:, :, 1:].mean()
 
-        # 应用损失权重
-        if self.use_dynamic_loss_scaling:
-            loss_weight = self.loss_weight[t_indices].view(-1, 1, 1)
-            loss = loss * loss_weight
-
-        loss = loss.mean()
+        # 对每个样本计算均值，然后对 batch 计算均值
+        loss = loss.mean(dim=(1, 2)).mean()
 
         return loss, loss_temporal, loss_spatial
 
@@ -356,19 +385,28 @@ class RectifiedFlow(nn.Module):
 
     def forward(self, img, cond):
         """
-        模型前向传播：随机采样时间点并计算损失
+        模型前向传播：采样时间点并计算损失
+        
+        使用 Logit-Normal 分布采样时间（如果启用），否则使用均匀采样。
+        Logit-Normal 采样来自 SD3 / Rectified Flow 的改进实践。
         """
         b, c, n, device = *img.shape, img.device
         assert n == self.seq_length, f'输入序列长度必须为 {self.seq_length}'
 
-        # 随机采样时间索引
-        t_indices = torch.randint(0, self.num_timesteps, (b, ), device=device)  # [bsz]
-
         # 归一化输入
         img = normalize_to_neg_one_to_one(img)
 
+        # 采样时间
+        if self.use_logit_normal:
+            # 使用 Logit-Normal 分布采样连续时间
+            t = self.sample_t(b, device=device)  # [bsz], 值在 (0, 1) 之间
+        else:
+            # 使用均匀离散采样（原始方式）
+            t_indices = torch.randint(0, self.num_timesteps, (b, ), device=device)
+            t = self.timesteps[t_indices]  # [bsz]
+
         # 计算损失
-        loss, _, _ = self.p_losses(img, t_indices, cond)
+        loss, _, _ = self.p_losses(img, t, cond)
         return loss
 
 

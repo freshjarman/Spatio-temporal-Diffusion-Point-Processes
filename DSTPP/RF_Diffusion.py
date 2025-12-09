@@ -198,7 +198,7 @@ class RF_Diffusion(nn.Module):
 
         # JiT 参数化: v = (pred_x0 - x_t) / t
         # 因为 v = x_0 - x_1 = (pred_x0 - x_t) / t
-        t_safe = torch.clamp(t, min=1e-4).view(-1, 1, 1)  # [B, 1, 1]，避免除零
+        t_safe = torch.clamp(t, min=5e-2).view(-1, 1, 1)  # [B, 1, 1]，避免除零
         v_output = (pred_x0 - x) / t_safe
 
         return v_output  # [B, 1, dim]

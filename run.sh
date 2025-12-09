@@ -76,4 +76,6 @@ python -u app_uq_ensemble_test.py \
 # Training Stage
 
 python -u app_uq_ensemble.py --dataset Crime --mode train --model_type rf --enable_uq --n_ensemble 100 --samplingsteps 10 --timesteps 500 --batch_size 512 --total_epochs 1000 --lr 5e-4 --seed 218
-python -u app_uq_ensemble.py --dataset Crime --mode train --model_type rf --enable_uq --n_ensemble 150 --timesteps 500 --samplingsteps 10 --batch_size 512 --total_epochs 500 --lr 5e-4 --log_normalization 1
+
+python -u app_uq_ensemble.py \
+   --dataset Crime --mode train --model_type rf --enable_uq --n_ensemble 100 --timesteps 500 --samplingsteps 10 --batch_size 512 --total_epochs 500 --lr 5e-4 --log_normalization 0 --seed 218
