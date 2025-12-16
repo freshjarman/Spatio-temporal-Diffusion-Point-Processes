@@ -162,12 +162,14 @@ def get_args():
     parser.add_argument('--loss_type', type=str, default='l2', choices=['l1', 'l2', 'Euclid'], help='')
     parser.add_argument('--beta_schedule', type=str, default='cosine', choices=['linear', 'cosine'], help='')
     parser.add_argument('--dim', type=int, default=2, help='', choices=[1, 2, 3])
-    parser.add_argument(
-        '--dataset',
-        type=str,
-        default='Earthquake',
-        choices=['Citibike', 'Earthquake', 'HawkesGMM', 'Pinwheel', 'COVID19', 'Mobility', 'HawkesGMM_2d', 'Crime', 'Football', 'Independent'],
-        help='')
+    parser.add_argument('--dataset',
+                        type=str,
+                        default='Earthquake',
+                        choices=[
+                            'Citibike', 'Earthquake', 'HawkesGMM', 'Pinwheel', 'COVID19', 'Mobility', 'HawkesGMM_2d', 'Crime', 'Football',
+                            'Independent', 'earth-stpp-smash'
+                        ],
+                        help='')
     parser.add_argument('--batch_size', type=int, default=128, help='')
     parser.add_argument('--lr', type=float, default=5e-4, help='学习率')
     parser.add_argument('--timesteps', type=int, default=50, help='')
