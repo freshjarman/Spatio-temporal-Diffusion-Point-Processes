@@ -25,6 +25,7 @@ from typing import List, Optional, Tuple
 from DSTPP import GaussianDiffusion_ST, Transformer_ST, Model_all, ST_Diffusion
 from DSTPP import RectifiedFlow, RF_Diffusion
 from DSTPP.RF_Model_all import RF_Model_all
+from DSTPP.PriorNet import PriorNet
 
 # ============ Model Configuration Constants ============
 # Centralized configuration to avoid hardcoding in multiple places
@@ -78,8 +79,30 @@ def create_model(opt, device: torch.device):
         Model = Model_all(transformer, diffusion).to(device)
     elif opt.model_type == 'rf':
         model = RF_Diffusion(n_steps=opt.timesteps, dim=1 + opt.dim, condition=True, cond_dim=MODEL_CONFIG['cond_dim']).to(device)
-        rf = RectifiedFlow(model, loss_type=opt.loss_type, seq_length=1 + opt.dim, timesteps=opt.timesteps,
-                           sampling_timesteps=opt.samplingsteps).to(device)
+
+        # Create PriorNet if enabled (opt.use_prior_net defaults to False if not set)
+        prior_net = None
+        use_prior_net = getattr(opt, 'use_prior_net', False)
+        kl_weight = getattr(opt, 'kl_weight', 0.001)
+        prior_hidden_dim = getattr(opt, 'prior_hidden_dim', 128)
+
+        if use_prior_net:
+            prior_net = PriorNet(
+                cond_dim=MODEL_CONFIG['cond_dim'],  # d_model = 64
+                output_dim=1 + opt.dim,  # time + location dimensions
+                hidden_dim=prior_hidden_dim,
+            ).to(device)
+            print(f'[PriorNet] Enabled with kl_weight={kl_weight}, hidden_dim={prior_hidden_dim}')
+
+        rf = RectifiedFlow(
+            model,
+            loss_type=opt.loss_type,
+            seq_length=1 + opt.dim,
+            timesteps=opt.timesteps,
+            sampling_timesteps=opt.samplingsteps,
+            prior_net=prior_net,
+            kl_weight=kl_weight,
+        ).to(device)
         Model = RF_Model_all(transformer, rf).to(device)
     else:
         raise ValueError(f"Unsupported model type: {opt.model_type}")

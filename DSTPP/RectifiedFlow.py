@@ -30,16 +30,10 @@ This implementation supports conditional generation (using `cond`) and handles s
 """
 
 import math
-from functools import partial
-from sympy import rf
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from tqdm.auto import tqdm
-import numpy as np
 from torchdiffeq import odeint
-
-# from zmq import device
 
 
 # 还是说归一化到[-1, 1]是为了保证数据和噪声的均值和尺度更加匹配？从而在线性插值过程中均值始终为0，从而降低v的学习难度？
@@ -144,17 +138,29 @@ class RectifiedFlow(nn.Module):
     """
     基于Rectified Flow的时空点过程模型
     学习直接的ODE轨迹而不是逐步去噪过程
+    
+    Args:
+        model: 速度场预测网络 (RF_Diffusion)
+        seq_length: 序列长度 (1 + loc_dim)
+        timesteps: 训练时间步数
+        sampling_timesteps: 采样步数
+        loss_type: 损失类型 ('l1' or 'l2')
+        use_dynamic_loss_scaling: 是否使用时间相关的损失权重
+        prior_net: 可选的 PriorNet 实例，用于历史自适应先验
+        kl_weight: KL 散度损失权重 (仅当 prior_net 不为 None 时生效)
     """
 
     def __init__(
-            self,
-            model,
-            *,
-            seq_length,
-            timesteps=1000,
-            sampling_timesteps=None,
-            loss_type='l2',
-            use_dynamic_loss_scaling=True,  # 是否使用动态损失缩放
+        self,
+        model,
+        *,
+        seq_length,
+        timesteps=1000,
+        sampling_timesteps=None,
+        loss_type='l2',
+        use_dynamic_loss_scaling=True,
+        prior_net=None,
+        kl_weight=0.001,
     ):
         super().__init__()
         self.model = model
@@ -163,6 +169,10 @@ class RectifiedFlow(nn.Module):
         self.num_timesteps = timesteps
         self.loss_type = loss_type
         self.use_dynamic_loss_scaling = use_dynamic_loss_scaling
+
+        # PriorNet for history-adaptive prior (可选)
+        self.prior_net = prior_net
+        self.kl_weight = kl_weight
 
         # 采样相关参数
         self.sampling_timesteps = default(sampling_timesteps, timesteps)
@@ -183,27 +193,128 @@ class RectifiedFlow(nn.Module):
         else:
             self.register_buffer('loss_weight', torch.ones(timesteps))
 
-    def straight_path_interpolation(self, x_start, t, noise=None):
+    def _extract_history_encoding(self, cond):
         """
-        计算直线路径插值
-        x_t = (1-t) * x_start + t * 噪声
+        从条件信息中提取历史编码用于 PriorNet。
+        
+        cond 格式: [batch, 1, 3*d_model] = [enc_temporal, enc_spatial, enc_joint]
+        我们使用 enc_joint (最后 d_model 维) 作为整体历史表示。
+        
+        Args:
+            cond: [batch, 1, 3*d_model] 条件信息
+        
+        Returns:
+            history_enc: [batch, d_model] 用于 PriorNet 的历史编码
         """
-        if noise is None:
-            noise = torch.randn_like(x_start)
-        x_t = (1 - t.view(-1, 1, 1)) * x_start + t.view(-1, 1, 1) * noise
-        return x_t, noise
+        if cond is None:
+            return None
+        d_model = cond.shape[-1] // 3
+        # 取 enc_joint 部分 (最后 d_model 维)
+        history_enc = cond[:, 0, 2 * d_model:]  # [batch, d_model]
+        return history_enc
 
-    def velocity_vector(self, x_start, t):
+    def _sample_prior(self, shape, device, cond=None):
+        """
+        从先验分布采样噪声。
+        
+        如果有 PriorNet，从 N(μ(H), σ²(H)) 采样；否则从 N(0, I) 采样。
+        
+        Args:
+            shape: 输出形状 (batch, channels, seq_length)
+            device: 设备
+            cond: 条件信息
+        
+        Returns:
+            noise: [batch, channels, seq_length] 采样的噪声
+        """
+        if self.prior_net is not None and cond is not None:
+            history_enc = self._extract_history_encoding(cond)
+            # PriorNet 输出: [batch, seq_length]
+            noise_flat = self.prior_net.sample(history_enc)  # [batch, seq_length]
+            # 调整形状: [batch, 1, seq_length]
+            noise = noise_flat.unsqueeze(1)
+        else:
+            noise = torch.randn(shape, device=device)
+        return noise
+
+    def _compute_prior_log_prob(self, z, cond=None):
+        """
+        计算先验分布下的对数概率，分解为时间和空间分量。
+        
+        Args:
+            z: [batch, 1, seq_length] 样本 (在归一化空间 [-1, 1])
+            cond: 条件信息
+        
+        Returns:
+            log_prob: [batch] 总对数概率
+            log_prob_t: [batch] 时间分量
+            log_prob_s: [batch] 空间分量
+        """
+        D = z.shape[-1]
+        z_flat = z.squeeze(1)  # [batch, seq_length]
+
+        if self.prior_net is not None and cond is not None:
+            history_enc = self._extract_history_encoding(cond)
+            log_prob, log_prob_t, log_prob_s = self.prior_net.log_prob_decomposed(z_flat, history_enc)
+        else:
+            # 标准高斯先验
+            log_prob = -0.5 * (D * math.log(2 * math.pi) + torch.sum(z_flat**2, dim=-1))
+            log_prob_t = -0.5 * (math.log(2 * math.pi) + z_flat[:, 0]**2)
+            log_prob_s = -0.5 * ((D - 1) * math.log(2 * math.pi) + torch.sum(z_flat[:, 1:]**2, dim=-1))
+
+        return log_prob, log_prob_t, log_prob_s
+
+    def _compute_kl_loss(self, cond):
+        """
+        计算 KL 散度损失 (仅当使用 PriorNet 时)。
+        
+        Args:
+            cond: 条件信息
+        
+        Returns:
+            kl_loss: 标量，KL 散度损失的 batch 均值
+        """
+        if self.prior_net is None or cond is None:
+            return torch.tensor(0.0, device=cond.device if cond is not None else 'cpu')
+
+        history_enc = self._extract_history_encoding(cond)
+        kl = self.prior_net.kl_divergence(history_enc)  # [batch]
+        return kl.mean()
+
+    def straight_path_interpolation(self, x_start, t, noise):
+        """
+        计算直线路径插值: x_t = (1-t) * x_start + t * noise
+        
+        Args:
+            x_start: [batch, 1, seq_length] 真实数据
+            t: [batch] 时间点
+            noise: [batch, 1, seq_length] 噪声
+        
+        Returns:
+            x_t: 插值结果
+        """
+        x_t = (1 - t.view(-1, 1, 1)) * x_start + t.view(-1, 1, 1) * noise
+        return x_t
+
+    def velocity_vector(self, x_start, t, cond=None):
         """
         计算速度向量: v(x_t, t) = x_0 - x_1
         对于直线路径：x_1为噪声，x_0为原始数据
+        
+        当使用 PriorNet 时，噪声从 N(μ(H), σ²(H)) 采样。
+        
+        Args:
+            x_start: [batch, 1, seq_length] 真实数据
+            t: [batch] 时间点
+            cond: 条件信息 (用于 PriorNet)
+        
+        Returns:
+            x_t: 插值状态
+            velocity: 目标速度向量
         """
-        noise = torch.randn_like(x_start)
-        x_t, _ = self.straight_path_interpolation(x_start, t, noise)  # noise要保证和x_start唯一对应
-
-        # 速度向量指向x_start (从噪声指向数据)
+        noise = self._sample_prior(x_start.shape, x_start.device, cond)
+        x_t = self.straight_path_interpolation(x_start, t, noise)
         velocity = x_start - noise
-
         return x_t, velocity
 
     @property
@@ -218,20 +329,23 @@ class RectifiedFlow(nn.Module):
     def p_losses(self, x_start, t_indices, cond=None):
         """
         计算损失：预测的速度向量与真实速度向量之间的差异
+        
+        Returns:
+            loss: 总损失 (flow matching loss，不含 KL)
+            loss_temporal: 时间维度损失
+            loss_spatial: 空间维度损失
         """
-        batch_size = x_start.shape[0]
-
         # 获取实际时间步长
         t = self.timesteps[t_indices]
 
-        # 计算当前点和真实速度向量
-        x_t, true_velocity = self.velocity_vector(x_start, t)  # [bsz, 1, dim] (1 + opt.dim)
+        # 计算当前点和真实速度向量 (使用自适应先验采样噪声)
+        x_t, true_velocity = self.velocity_vector(x_start, t, cond)  # [bsz, 1, dim]
 
         # 模型预测速度向量
         pred_velocity = self.model(x_t, t, None, cond)
 
         # 计算损失
-        loss = self.loss_fn(pred_velocity, true_velocity, reduction='none')  # [bsz, 1, dim] (1 + opt.dim)
+        loss = self.loss_fn(pred_velocity, true_velocity, reduction='none')  # [bsz, 1, dim]
 
         # 区分时间和空间维度的损失
         loss_temporal = loss[:, :, :1].mean()
@@ -261,11 +375,11 @@ class RectifiedFlow(nn.Module):
         """
         device = next(self.parameters()).device
         steps = default(steps, self.sampling_timesteps)
-
-        # 从标准高斯分布开始，或使用提供的噪声
         shape = (batch_size, self.channels, self.seq_length)
+
+        # 从先验分布采样起始噪声 (自适应或标准高斯)
         if noise is None:
-            x = torch.randn(shape, device=device)
+            x = self._sample_prior(shape, device, cond)
         else:
             x = noise.to(device)
 
@@ -328,21 +442,12 @@ class RectifiedFlow(nn.Module):
         # [bsz, 1, dim], [bsz], [bsz], [bsz]
         x1, a1, a1_t, a1_s = [final_state_tuple[i][-1] for i in range(4)]
 
-        # x1 = final_state_tuple[0][-1]  # [bsz, 1, dim], State at t=1 (should approx noise)
-        # a1 = final_state_tuple[1][-1]  # [bsz], Accumulated logp change a1 = integral[0,1] da/dt dt
+        # x1: State at t=1 (should approx noise from prior)
+        # a1: Accumulated log-density change = integral[0,1] div(v_theta) dt
 
-        # Calculate log prior probability of the state at t=1
-        D = x1.shape[1:].numel()
-        log_prior_p1 = -0.5 * (D * math.log(2 * math.pi) + torch.sum(x1**2, dim=tuple(range(1, x1.dim()))))
-        # Change of variables: log p0(x0) = log p1(x1) - integral[0,1] div(dx/dt) dt
-        # From ODEFunc: da/dt = +div(v_theta)
-        # Also, d(log p)/dt = -div(dx/dt) = -div(-v_theta) = +div(v_theta) = da/dt
-        # So, a1 = integral[0,1] da/dt dt = integral[0,1] d(log p)/dt dt = log p1(x1) - log p0(x0)
-        # Therefore: log p0(x0) = log p1(x1) - a1
-
-        # 时间 / 空间先验
-        log_p1_t = -0.5 * (math.log(2 * math.pi) + (x1[:, :, 0:1]**2).sum(dim=tuple(range(1, x1.dim()))))
-        log_p1_s = -0.5 * ((D - 1) * math.log(2 * math.pi) + (x1[:, :, 1:]**2).sum(dim=tuple(range(1, x1.dim()))))
+        # Calculate log prior probability of x1 (使用自适应或标准先验)
+        # Change of variables: log p0(x0) = log p1(x1) - a1
+        log_prior_p1, log_p1_t, log_p1_s = self._compute_prior_log_prob(x1, cond)
 
         log_p0 = log_prior_p1 - a1  # [bsz]
         log_p0_t = log_p1_t - a1_t  # [bsz]
@@ -357,19 +462,50 @@ class RectifiedFlow(nn.Module):
     def forward(self, img, cond):
         """
         模型前向传播：随机采样时间点并计算损失
+        
+        Returns:
+            loss: 总损失 = flow_matching_loss + kl_weight * kl_loss
         """
         b, c, n, device = *img.shape, img.device
         assert n == self.seq_length, f'输入序列长度必须为 {self.seq_length}'
 
         # 随机采样时间索引
-        t_indices = torch.randint(0, self.num_timesteps, (b, ), device=device)  # [bsz]
+        t_indices = torch.randint(0, self.num_timesteps, (b, ), device=device)
 
         # 归一化输入
         img = normalize_to_neg_one_to_one(img)
 
-        # 计算损失
-        loss, _, _ = self.p_losses(img, t_indices, cond)
+        # 计算 flow matching 损失
+        fm_loss, _, _ = self.p_losses(img, t_indices, cond)
+
+        # 计算 KL 损失 (仅当使用 PriorNet 时)
+        kl_loss = self._compute_kl_loss(cond)
+
+        # 总损失
+        loss = fm_loss + self.kl_weight * kl_loss
         return loss
+
+    def forward_with_details(self, img, cond):
+        """
+        带详细损失分解的前向传播 (用于日志记录)。
+        
+        Returns:
+            loss: 总损失
+            loss_temporal: 时间维度 flow matching 损失
+            loss_spatial: 空间维度 flow matching 损失  
+            kl_loss: KL 散度损失
+        """
+        b, c, n, device = *img.shape, img.device
+        assert n == self.seq_length, f'输入序列长度必须为 {self.seq_length}'
+
+        t_indices = torch.randint(0, self.num_timesteps, (b, ), device=device)
+        img = normalize_to_neg_one_to_one(img)
+
+        fm_loss, loss_temporal, loss_spatial = self.p_losses(img, t_indices, cond)
+        kl_loss = self._compute_kl_loss(cond)
+
+        loss = fm_loss + self.kl_weight * kl_loss
+        return loss, loss_temporal, loss_spatial, kl_loss
 
 
 if __name__ == '__main__':

@@ -110,12 +110,34 @@
 
 ## 2025.12.2
 1. [ ] EXPERIMENTs: via trained models (different seeds or different epochs), select the main model and auxiliary models (then set `--samplingsteps + --n_ensemble`); test the whole pipeline of generative-uncertainty enhanced ensemble on both accuracy and uncertainty metrics (by setting `--enable_filtered_ensemble` in `app_uq_ensemble_test.py`, w.r.t. different `--filter_ratio + no-use_weighting` settings)
-2. [ ] feat: [Training] add guidence in `README.md` for `app_uq_ensemble.py` usage guide
+2. [x] feat: [Training] add guidence in `README.md` for `app_uq_ensemble.py` usage guide
+
+## 2025.12.17 
+0. Refer to [Gemini 3 pro](https://gemini.google.com/share/69abd4090618)
+1. [ ] **PriorNet: History-Adaptive Prior Network for DSTPP**
+   - implement the PriorNet module in `RF_Diffusion.py` (noise prior $\sim \mathcal{N}(\mu(H), \Sigma(H))$)
+   - modify the `RectifiedFlow.py` to support PriorNet, including:
+     - training: sample noise from history-adaptive prior rather than standard Gaussian, then construct training couples
+     - sampling: modify the initial noise sampling (for each event to predict) from standard Gaussian to history-adaptive prior
+     - NLL_cal: modify the `calculate_neg_log_likelihood` to support history-adaptive prior rather than standard Gaussian prior, i.e. change the base distribution in log-likelihood calculation
+   - check (modify) the training/inference codes in `app_uq_ensemble.py` and `app_uq_ensemble_test.py` to support PriorNet
+2. [ ] **Ensemble:** use 'DBSCAN-cluster' or 'Medoid', rather than Mean, to get final ensemble result from multiple samples
+   - modify the `model_utils.py` to support new ensemble strategy
+   - check (modify) the inference codes in `app_uq_ensemble_test.py` to support new ensemble strategy
+   - **MOTIVATION:** Especially for **spatial domain** -- "To handle the inherent multi-modality of STPP, we employ a geometric clustering strategy (e.g., DBSCAN) to identify representative samples (medoids) from the generated set, ensuring that the final predictions capture diverse event patterns rather than converging to an average that may not represent any realistic scenario."
 
 
-## Previous Results Fault with `SMASH`
-1. - [ ] previous STPP results on `SMASH` repo are kinda wrong, because the data processing part is not consistent with `DSTPP` repo, where **event marks' effect should be removed**, need to re-conduct experiments on `SMASH` other than directly using its paper results (**all baselines' real results may be worse than paper results?**)
-2. - [ ] re-conduct experiments on `football` dataset with my `RF-STPP`, with better data processing part (e.g. use 'log' normalization for data which is consistent with `SMASH` repo; **Attention:** `SMASH` use log-normalization for all datasets, ours use [0, 1] normalization for all datasets! Is it unfair for baselines? Need to check if the same normalization method is essential for fair comparison!)
+
+
+
+
+
+## Previous Results Mistakes with `SMASH`
+1. [ ] previous STPP results on `SMASH` repo are kinda wrong, because the data processing part is not consistent with `DSTPP` repo, where **event marks' effect should be removed**, need to re-conduct experiments on `SMASH` other than directly using its paper results 
+   - Q: All baselines' real results may be worse than paper results? 
+   - A: MAE yes, CS partly.
+2. [ ] re-conduct experiments on `football` dataset with my `RF-STPP`, with better data processing part (e.g. use 'log' normalization for data which is consistent with `SMASH` repo;  
+   > **Attention:** `SMASH` use log-normalization for all datasets, ours use [0, 1] normalization for all datasets! Is it unfair for baselines? Need to check if the same normalization method is essential for fair comparison!)
 
 
 

@@ -44,7 +44,7 @@ python -u app_uq_ensemble_test.py \
     # --cuda_id 0 \
     --cpu_num 6 \
     --log_normalization 0 \  # not use log-normalization for d_t
-    --main_model_path "./ModelSave/dataset_Earthquake_timesteps_1000_2025-06-09-10h/model_280.pkl" \
+    --main_model_path "./ModelSave/dataset_Earthquake_timesteps_1000_2025-06-09-10h/model_280.pkl" \  # 必须
     --enable_filtered_ensemble \
     --aux_model_dir "./ModelSave/dataset_Earthquake_timesteps_1000_2025-06-09-10h/" \
     --aux_model_epochs "100,150,200,250,280" \
@@ -76,4 +76,17 @@ python -u app_uq_ensemble_test.py \
 # Training Stage
 
 python -u app_uq_ensemble.py --dataset Crime --mode train --model_type rf --enable_uq --n_ensemble 100 --samplingsteps 10 --timesteps 500 --batch_size 512 --total_epochs 1000 --lr 5e-4 --seed 218
-python -u app_uq_ensemble.py --dataset Crime --mode train --model_type rf --enable_uq --n_ensemble 150 --timesteps 500 --samplingsteps 10 --batch_size 512 --total_epochs 500 --lr 5e-4 --log_normalization 1
+python -u app_uq_ensemble.py --dataset Crime --mode train --model_type rf --enable_uq --n_ensemble 150 --timesteps 500 --samplingsteps 10 --batch_size 512 --total_epochs 500 --lr 5e-4 --log_normalization 1 --seed 218
+
+### 使用方法
+
+训练（启用 PriorNet）：
+python app_uq_ensemble.py --model_type rf --dataset earth-stpp-smash \
+    --use_prior_net --kl_weight 0.001 --prior_hidden_dim 128 --seed 218
+
+训练（不启用，标准高斯先验）：
+python app_uq_ensemble.py --model_type rf --dataset earth-stpp-smash --seed 218
+
+测试：
+python app_uq_ensemble_test.py --model_type rf --dataset earth-stpp-smash \
+    --use_prior_net --main_model_path ./ModelSave/xxx/model_xxx.pkl --seed 218

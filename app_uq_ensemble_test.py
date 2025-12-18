@@ -184,6 +184,10 @@ def get_args():
                         help='Use inverse-entropy weighting for ensemble (use --no-use_weighting to disable)')
     # Log normalization for temporal data
     parser.add_argument('--log_normalization', type=int, default=1, help='是否对时间间隔进行log变换 (1=是, 0=否)')
+    # PriorNet: History-Adaptive Prior (must match training configuration)
+    parser.add_argument('--use_prior_net', action='store_true', help='使用历史自适应先验网络 (PriorNet)')
+    parser.add_argument('--kl_weight', type=float, default=0.001, help='KL散度损失权重')
+    parser.add_argument('--prior_hidden_dim', type=int, default=128, help='PriorNet隐藏层维度')
 
     args = parser.parse_args()
     args.cuda = torch.cuda.is_available()
