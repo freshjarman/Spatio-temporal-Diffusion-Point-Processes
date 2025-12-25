@@ -182,6 +182,8 @@ def get_args():
                         action=argparse.BooleanOptionalAction,
                         default=True,
                         help='Use inverse-entropy weighting for ensemble (use --no-use_weighting to disable)')
+    # NEW: 添加集成聚合策略参数
+    parser.add_argument('--ensemble_agg', type=str, default='mean', choices=['mean', 'median'], help='集成聚合策略: mean (加权平均) 或 median (中位数)')
     # Log normalization for temporal data
     parser.add_argument('--log_normalization', type=int, default=1, help='是否对时间间隔进行log变换 (1=是, 0=否)')
     # PriorNet: History-Adaptive Prior (must match training configuration)
@@ -477,22 +479,27 @@ if __name__ == "__main__":
                 temporal_stack = torch.stack(sampled_temporal_all, dim=0)  # [n_filtered, bsz, 1]
                 spatial_stack = torch.stack(sampled_spatial_all, dim=0)  # [n_filtered, bsz, dim]
 
-                # 使用ensemble权重进行加权平均
-                # 注意: ensemble_weights 可能是 torch.Tensor 或 list，需要统一处理
-                if isinstance(ensemble_weights, torch.Tensor):
-                    weights_tensor = ensemble_weights.to(device=temporal_stack.device, dtype=temporal_stack.dtype)
+                if opt.ensemble_agg == 'median':
+                    # 使用中位数 (Median)
+                    ensemble_temporal_mean = torch.median(temporal_stack, dim=0).values  # [bsz, 1]
+                    ensemble_spatial_mean = torch.median(spatial_stack, dim=0).values  # [bsz, dim]
                 else:
-                    weights_tensor = torch.tensor(ensemble_weights, device=temporal_stack.device, dtype=temporal_stack.dtype)
-                weights_tensor = weights_tensor.view(-1, 1, 1)  # [n_filtered, 1, 1]
+                    # 使用ensemble权重进行加权平均 (默认 mean)
+                    # 注意: ensemble_weights 可能是 torch.Tensor 或 list，需要统一处理
+                    if isinstance(ensemble_weights, torch.Tensor):
+                        weights_tensor = ensemble_weights.to(device=temporal_stack.device, dtype=temporal_stack.dtype)
+                    else:
+                        weights_tensor = torch.tensor(ensemble_weights, device=temporal_stack.device, dtype=temporal_stack.dtype)
+                    weights_tensor = weights_tensor.view(-1, 1, 1)  # [n_filtered, 1, 1]
 
-                # 在加权平均之前添加验证
-                n_filtered = len(sampled_temporal_all)
-                assert len(sampled_spatial_all) == n_filtered, "Temporal and spatial predictions count mismatch"
-                assert weights_tensor.shape[0] == n_filtered, f"Weights count ({weights_tensor.shape[0]}) != predictions count ({n_filtered})"
+                    # 在加权平均之前添加验证
+                    n_filtered = len(sampled_temporal_all)
+                    assert len(sampled_spatial_all) == n_filtered, "Temporal and spatial predictions count mismatch"
+                    assert weights_tensor.shape[0] == n_filtered, f"Weights count ({weights_tensor.shape[0]}) != predictions count ({n_filtered})"
 
-                # 加权平均
-                ensemble_temporal_mean = (temporal_stack * weights_tensor).sum(dim=0)  # [bsz, 1]
-                ensemble_spatial_mean = (spatial_stack * weights_tensor).sum(dim=0)  # [bsz, dim]
+                    # 加权平均
+                    ensemble_temporal_mean = (temporal_stack * weights_tensor).sum(dim=0)  # [bsz, 1]
+                    ensemble_spatial_mean = (spatial_stack * weights_tensor).sum(dim=0)  # [bsz, dim]
 
                 # Temporal metrics - use denormalization function with log_normalization support
                 real_time_gt = denormalization(event_time_non_mask[:, 0, :], MAX[1], MIN[1], opt.log_normalization)

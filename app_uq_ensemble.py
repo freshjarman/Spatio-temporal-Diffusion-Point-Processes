@@ -181,6 +181,8 @@ def get_args():
     # NEW: UQ评估参数
     parser.add_argument('--enable_uq', action='store_true', help='启用uncertainty quantification评估')
     parser.add_argument('--n_ensemble', type=int, default=5, help='ensemble采样数量')
+    # NEW: 添加集成聚合策略参数
+    parser.add_argument('--ensemble_agg', type=str, default='mean', choices=['mean', 'median'], help='集成聚合策略: mean (加权平均) 或 median (中位数)')
     # cpu核数
     parser.add_argument('--cpu_num', type=int, default=12, help='CPU核数')
     # Log normalization for temporal data
@@ -506,9 +508,14 @@ if __name__ == "__main__":
                         # 计算ensemble预测的加权均值作为最终预测；ensemble_weights: [n_samples], 权重和为1
                         stacked_temporal = torch.stack(sampled_temporal_all, dim=0)  # [n_samples, bsz, 1]
                         stacked_spatial = torch.stack(sampled_spatial_all, dim=0)  # [n_samples, bsz, dim]
-                        weights_view = ensemble_weights.view(-1, 1, 1).to(stacked_temporal.device)
-                        ensemble_temporal_mean = (stacked_temporal * weights_view).sum(dim=0)  # [bsz, 1]
-                        ensemble_spatial_mean = (stacked_spatial * weights_view).sum(dim=0)  # [bsz, dim]
+
+                        if opt.ensemble_agg == 'median':
+                            ensemble_temporal_mean = torch.median(stacked_temporal, dim=0).values
+                            ensemble_spatial_mean = torch.median(stacked_spatial, dim=0).values
+                        else:
+                            weights_view = ensemble_weights.view(-1, 1, 1).to(stacked_temporal.device)
+                            ensemble_temporal_mean = (stacked_temporal * weights_view).sum(dim=0)  # [bsz, 1]
+                            ensemble_spatial_mean = (stacked_spatial * weights_view).sum(dim=0)  # [bsz, dim]
 
                         # Temporal metrics - use denormalization function with log_normalization support
                         real_time_gt = denormalization(event_time_non_mask[:, 0, :], MAX[1], MIN[1], opt.log_normalization)

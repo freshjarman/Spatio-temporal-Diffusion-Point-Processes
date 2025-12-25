@@ -15,6 +15,8 @@ $env:KMP_DUPLICATE_LIB_OK="TRUE"; python app_uq_ensemble.py --dataset Earthquake
 # --timesteps 必须对应正确
 $env:KMP_DUPLICATE_LIB_OK="TRUE"; python app_uq_ensemble_test.py --dataset Earthquake --mode test --model_type rf --timesteps 1000 --n_ensemble 100 --samplingsteps 50 --batch_size 64 --cuda_id 0
 $env:KMP_DUPLICATE_LIB_OK="TRUE"; python app_uq_ensemble_test.py --dataset Crime --mode test --model_type rf --timesteps 50 --n_ensemble 100 --samplingsteps 5 --batch_size 256
+# ./ModelSave/dataset_Crime_timesteps_50_2025-05-27-09h/model_190.pkl
+# ./ModelSave/dataset_Earthquake_timesteps_1000_2025-06-09-10h/model_280.pkl
 
 # cost time 
 $env:KMP_DUPLICATE_LIB_OK="TRUE"; python app_test_cost_time.py --dataset Earthquake --mode test --model_type rf --timesteps 1000 --n_ensemble 1 --samplingsteps 3 --batch_size 64 --cuda_id 0
