@@ -139,6 +139,12 @@ class RectifiedFlow(nn.Module):
     基于Rectified Flow的时空点过程模型
     学习直接的ODE轨迹而不是逐步去噪过程
     
+    HAP (History Adaptive Prior) Design:
+        - PriorNet outputs μ(H) and σ(H) as informative prior
+        - μ is supervised by ground truth via NLL loss
+        - σ represents calibrated prediction uncertainty
+        - No KL regularization (we WANT informative prior, not standard Gaussian)
+    
     Args:
         model: 速度场预测网络 (RF_Diffusion)
         seq_length: 序列长度 (1 + loc_dim)
@@ -146,21 +152,21 @@ class RectifiedFlow(nn.Module):
         sampling_timesteps: 采样步数
         loss_type: 损失类型 ('l1' or 'l2')
         use_dynamic_loss_scaling: 是否使用时间相关的损失权重
-        prior_net: 可选的 PriorNet 实例，用于历史自适应先验
-        kl_weight: KL 散度损失权重 (仅当 prior_net 不为 None 时生效)
+        prior_net: 可选的 PriorNet 实例，用于历史自适应先验 (HAP)
+        prior_loss_weight: Prior NLL 损失权重 (仅当 prior_net 不为 None 时生效)
     """
 
     def __init__(
-        self,
-        model,
-        *,
-        seq_length,
-        timesteps=1000,
-        sampling_timesteps=None,
-        loss_type='l2',
-        use_dynamic_loss_scaling=True,
-        prior_net=None,
-        kl_weight=0.001,
+            self,
+            model,
+            *,
+            seq_length,
+            timesteps=1000,
+            sampling_timesteps=None,
+            loss_type='l2',
+            use_dynamic_loss_scaling=True,
+            prior_net=None,
+            prior_loss_weight=0.1,  # HAP: Prior NLL loss weight (renamed from kl_weight)
     ):
         super().__init__()
         self.model = model
@@ -170,9 +176,9 @@ class RectifiedFlow(nn.Module):
         self.loss_type = loss_type
         self.use_dynamic_loss_scaling = use_dynamic_loss_scaling
 
-        # PriorNet for history-adaptive prior (可选)
+        # PriorNet for History-Adaptive Prior (HAP)
         self.prior_net = prior_net
-        self.kl_weight = kl_weight
+        self.prior_loss_weight = prior_loss_weight  # HAP: renamed from kl_weight
 
         # 采样相关参数
         self.sampling_timesteps = default(sampling_timesteps, timesteps)
@@ -264,22 +270,29 @@ class RectifiedFlow(nn.Module):
 
         return log_prob, log_prob_t, log_prob_s
 
-    def _compute_kl_loss(self, cond):
+    def _compute_prior_nll_loss(self, x_real, cond):
         """
-        计算 KL 散度损失 (仅当使用 PriorNet 时)。
+        计算 PriorNet 的 NLL 损失 (HAP 核心)。
+        
+        这是 HAP 的核心：让 PriorNet 的 μ 接近真实值 x_real，
+        同时 σ 学习成为校准的不确定性估计。
+        
+        NLL = 0.5 * [D*log(2π) + sum(log(σ²)) + sum((x_real - μ)² / σ²)]
         
         Args:
+            x_real: [batch, 1, seq_length] 真实数据 (已归一化到 [-1, 1])
             cond: 条件信息
         
         Returns:
-            kl_loss: 标量，KL 散度损失的 batch 均值
+            prior_loss: 标量，Prior NLL 损失的 batch 均值
         """
         if self.prior_net is None or cond is None:
-            return torch.tensor(0.0, device=cond.device if cond is not None else 'cpu')
+            return torch.tensor(0.0, device=x_real.device)
 
         history_enc = self._extract_history_encoding(cond)
-        kl = self.prior_net.kl_divergence(history_enc)  # [batch]
-        return kl.mean()
+        x_flat = x_real.squeeze(1)  # [batch, seq_length]
+        nll = self.prior_net.nll_loss(x_flat, history_enc)  # [batch]
+        return nll.mean()
 
     def straight_path_interpolation(self, x_start, t, noise):
         """
@@ -463,8 +476,12 @@ class RectifiedFlow(nn.Module):
         """
         模型前向传播：随机采样时间点并计算损失
         
+        HAP Loss: L_total = L_flow + λ * L_prior
+        - L_flow: Flow Matching MSE loss (velocity prediction)
+        - L_prior: PriorNet NLL loss (μ and σ supervision)
+        
         Returns:
-            loss: 总损失 = flow_matching_loss + kl_weight * kl_loss
+            loss: 总损失 = flow_matching_loss + prior_loss_weight * prior_nll_loss
         """
         b, c, n, device = *img.shape, img.device
         assert n == self.seq_length, f'输入序列长度必须为 {self.seq_length}'
@@ -473,39 +490,41 @@ class RectifiedFlow(nn.Module):
         t_indices = torch.randint(0, self.num_timesteps, (b, ), device=device)
 
         # 归一化输入
-        img = normalize_to_neg_one_to_one(img)
+        img_norm = normalize_to_neg_one_to_one(img)
 
         # 计算 flow matching 损失
-        fm_loss, _, _ = self.p_losses(img, t_indices, cond)
+        fm_loss, _, _ = self.p_losses(img_norm, t_indices, cond)
 
-        # 计算 KL 损失 (仅当使用 PriorNet 时)
-        kl_loss = self._compute_kl_loss(cond)
+        # 计算 Prior NLL 损失 (HAP 核心)
+        prior_loss = self._compute_prior_nll_loss(img_norm, cond)
 
         # 总损失
-        loss = fm_loss + self.kl_weight * kl_loss
+        loss = fm_loss + self.prior_loss_weight * prior_loss
         return loss
 
     def forward_with_details(self, img, cond):
         """
         带详细损失分解的前向传播 (用于日志记录)。
         
+        HAP Loss: L_total = L_flow + λ * L_prior
+        
         Returns:
             loss: 总损失
             loss_temporal: 时间维度 flow matching 损失
             loss_spatial: 空间维度 flow matching 损失  
-            kl_loss: KL 散度损失
+            prior_loss: Prior NLL 损失 (HAP)
         """
         b, c, n, device = *img.shape, img.device
         assert n == self.seq_length, f'输入序列长度必须为 {self.seq_length}'
 
         t_indices = torch.randint(0, self.num_timesteps, (b, ), device=device)
-        img = normalize_to_neg_one_to_one(img)
+        img_norm = normalize_to_neg_one_to_one(img)
 
-        fm_loss, loss_temporal, loss_spatial = self.p_losses(img, t_indices, cond)
-        kl_loss = self._compute_kl_loss(cond)
+        fm_loss, loss_temporal, loss_spatial = self.p_losses(img_norm, t_indices, cond)
+        prior_loss = self._compute_prior_nll_loss(img_norm, cond)
 
-        loss = fm_loss + self.kl_weight * kl_loss
-        return loss, loss_temporal, loss_spatial, kl_loss
+        loss = fm_loss + self.prior_loss_weight * prior_loss
+        return loss, loss_temporal, loss_spatial, prior_loss
 
 
 if __name__ == '__main__':

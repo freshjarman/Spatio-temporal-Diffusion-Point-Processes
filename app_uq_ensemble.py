@@ -187,9 +187,9 @@ def get_args():
     parser.add_argument('--cpu_num', type=int, default=12, help='CPU核数')
     # Log normalization for temporal data
     parser.add_argument('--log_normalization', type=int, default=1, help='是否对时间间隔进行log变换 (1=是, 0=否)')
-    # PriorNet: History-Adaptive Prior
-    parser.add_argument('--use_prior_net', action='store_true', help='使用历史自适应先验网络 (PriorNet)')
-    parser.add_argument('--kl_weight', type=float, default=0.001, help='KL散度损失权重 (仅当use_prior_net时生效)')
+    # PriorNet: History-Adaptive Prior (HAP)
+    parser.add_argument('--use_prior_net', action='store_true', help='使用历史自适应先验网络 (HAP/PriorNet)')
+    parser.add_argument('--prior_loss_weight', type=float, default=0.1, help='Prior NLL损失权重 (仅当use_prior_net时生效)')
     parser.add_argument('--prior_hidden_dim', type=int, default=128, help='PriorNet隐藏层维度')
 
     args = parser.parse_args()
@@ -309,12 +309,13 @@ def generate_experiment_name(opt):
     Generate a unique and descriptive experiment name based on key hyperparameters.
     
     Naming convention:
-        {dataset}_{model_type}_T{timesteps}_S{samplingsteps}_seed{seed}_{date}_{short_uuid}
+        {dataset}_{model_type}[_HAP{prior_loss_weight}]_T{timesteps}_S{samplingsteps}_seed{seed}_{date}_{short_uuid}
     
     This ensures:
         1. Human-readable: key params visible in name
         2. Unique: short UUID prevents any collision
         3. Sortable: date format allows chronological sorting
+        4. HAP identifiable: HAP experiments clearly marked with loss weight
     """
     import uuid
 
@@ -323,8 +324,15 @@ def generate_experiment_name(opt):
     short_uuid = str(uuid.uuid4())[:6]  # 6 chars is enough for uniqueness
 
     # Build experiment name with key hyperparameters
+    # Include HAP marker if using prior_net
+    hap_marker = ""
+    if getattr(opt, 'use_prior_net', False):
+        prior_weight = getattr(opt, 'prior_loss_weight', 0.1)
+        hap_marker = f"_HAP{prior_weight}"
+
     exp_name = (f"{opt.dataset}_"
-                f"{opt.model_type}_"
+                f"{opt.model_type}"
+                f"{hap_marker}_"
                 f"T{opt.timesteps}_"
                 f"S{opt.samplingsteps}_"
                 f"seed{opt.seed}_"
@@ -361,11 +369,11 @@ if __name__ == "__main__":
     print(f'  UQ Enabled: {opt.enable_uq}')
     if opt.enable_uq:
         print(f'  Ensemble Samples: {opt.n_ensemble}')
-    # PriorNet configuration
+    # PriorNet configuration (HAP)
     if opt.use_prior_net:
-        print(f'  PriorNet: Enabled (kl_weight={opt.kl_weight}, hidden_dim={opt.prior_hidden_dim})')
+        print(f'  HAP/PriorNet: Enabled (prior_loss_weight={opt.prior_loss_weight}, hidden_dim={opt.prior_hidden_dim})')
     else:
-        print(f'  PriorNet: Disabled (standard Gaussian prior)')
+        print(f'  HAP/PriorNet: Disabled (standard Gaussian prior)')
     print('=' * 60)
 
     # ============ Generate Unique Experiment Name ============

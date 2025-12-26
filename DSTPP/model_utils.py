@@ -80,10 +80,10 @@ def create_model(opt, device: torch.device):
     elif opt.model_type == 'rf':
         model = RF_Diffusion(n_steps=opt.timesteps, dim=1 + opt.dim, condition=True, cond_dim=MODEL_CONFIG['cond_dim']).to(device)
 
-        # Create PriorNet if enabled (opt.use_prior_net defaults to False if not set)
+        # Create PriorNet if enabled (HAP - History Adaptive Prior)
         prior_net = None
         use_prior_net = getattr(opt, 'use_prior_net', False)
-        kl_weight = getattr(opt, 'kl_weight', 0.001)
+        prior_loss_weight = getattr(opt, 'prior_loss_weight', 0.1)  # HAP: renamed from kl_weight
         prior_hidden_dim = getattr(opt, 'prior_hidden_dim', 128)
 
         if use_prior_net:
@@ -92,7 +92,7 @@ def create_model(opt, device: torch.device):
                 output_dim=1 + opt.dim,  # time + location dimensions
                 hidden_dim=prior_hidden_dim,
             ).to(device)
-            print(f'[PriorNet] Enabled with kl_weight={kl_weight}, hidden_dim={prior_hidden_dim}')
+            print(f'[HAP/PriorNet] Enabled with prior_loss_weight={prior_loss_weight}, hidden_dim={prior_hidden_dim}')
 
         rf = RectifiedFlow(
             model,
@@ -101,7 +101,7 @@ def create_model(opt, device: torch.device):
             timesteps=opt.timesteps,
             sampling_timesteps=opt.samplingsteps,
             prior_net=prior_net,
-            kl_weight=kl_weight,
+            prior_loss_weight=prior_loss_weight,  # HAP: renamed from kl_weight
         ).to(device)
         Model = RF_Model_all(transformer, rf).to(device)
     else:
