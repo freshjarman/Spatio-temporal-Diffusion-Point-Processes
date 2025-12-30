@@ -330,9 +330,13 @@ def generate_experiment_name(opt):
         prior_weight = getattr(opt, 'prior_loss_weight', 0.1)
         hap_marker = f"_HAP{prior_weight}"
 
+    # --log_normalization marker
+    lognorm_marker = "LogNorm" if opt.log_normalization else "NoLogNorm"
+
     exp_name = (f"{opt.dataset}_"
                 f"{opt.model_type}"
                 f"{hap_marker}_"
+                f"{lognorm_marker}_"
                 f"T{opt.timesteps}_"
                 f"S{opt.samplingsteps}_"
                 f"seed{opt.seed}_"

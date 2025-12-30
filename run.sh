@@ -91,4 +91,4 @@ python app_uq_ensemble.py --model_type rf --dataset earth-stpp-smash --seed 218
 
 测试：
 python app_uq_ensemble_test.py --model_type rf --dataset earth-stpp-smash \
-    --use_prior_net --main_model_path ./ModelSave/xxx/model_xxx.pkl --seed 218
+    --use_prior_net --kl_weight 0.001 --prior_hidden_dim 128 --main_model_path ./ModelSave/xxx/model_xxx.pkl --seed 218
